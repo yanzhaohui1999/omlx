@@ -366,7 +366,26 @@ def test_glm_native_fused_kernels_match_reference(monkeypatch):
             mx.float16
         )
         mx.eval(y_native, y_ref)
-        assert float(mx.max(mx.abs(y_native - y_ref)).item()) == 0.0
+        # The kernel accumulates in float32 with `acc + a*b` contracted into an
+        # FMA (one rounding per step) while `mx.sum` rounds twice per step.
+        # Both are valid roundings of the same topk-term sum, so they can
+        # disagree by one float16 ULP wherever the exact result lands near a
+        # rounding boundary - roughly one output in several thousand, at both
+        # topk widths, so it is not a topk-specific effect.
+        # The limit below was measured by comparing two valid float32
+        # accumulation orders over 400 seeds x {topk 6, 8} (409600 outputs):
+        # every disagreement was exactly 1 ULP of float16, worst 5.2e-4
+        # relative against the 9.8e-4 limit. Injected arithmetic errors
+        # (dropped term, unnormalised scores, unreversed gather) land at
+        # 0.5-7.0 relative, so the assertion still has teeth.
+        diff = float(mx.max(mx.abs(y_native - y_ref)).item())
+        scale = float(mx.max(mx.abs(y_ref)).item())
+        tol = float(mx.finfo(y_ref.dtype).eps) * scale
+        assert diff <= tol, (
+            f"glm_moe_weighted_sum differs from the reference by {diff:.3e}, "
+            f"above 1 ULP of {y_ref.dtype} ({tol:.3e}) - that is an "
+            "arithmetic error, not rounding"
+        )
 
     batch, heads, length, latent, values = 1, 64, 1, 512, 256
     x = mx.random.normal((batch, heads, length, latent), dtype=mx.float16)
