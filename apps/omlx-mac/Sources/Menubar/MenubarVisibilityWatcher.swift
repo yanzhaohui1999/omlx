@@ -169,16 +169,31 @@ final class MenubarVisibilityWatcher {
         }
     }
 
+    /// Bundle ids of the menu bar managers we know how to recognise. A running
+    /// one means our icon is legitimately folded away, so the hidden-icon
+    /// alert would be noise — `showHiddenAlert()` suppresses it on that basis.
+    ///
+    /// Internal rather than private only so the test target can pin the
+    /// contents; `runningMenuBarManager()` is the sole reader.
+    ///
+    /// Each id comes from that vendor's own release, not a guess. Hidden Bar
+    /// (`dwarvesf/hidden`, ex-`dplock/HiddenBar`) has built the app target as
+    /// `com.dwarvesv.minimalbar` in every release since v1.1 and still does on
+    /// `develop` (#1929). v1.0 shipped `com.dwarvesv.hidden` instead; that is a
+    /// 2019 build nobody can plausibly still be running, so it is left out
+    /// rather than carried as dead weight.
+    static let menuBarManagerBundleIDs = [
+        "com.surteesstudios.Bartender",
+        "com.jordanbaird.Ice",
+        "com.jordanbaird.ice",
+        "com.stonerl.Thaw",
+        "com.dwarvesv.minimalbar"
+    ]
+
     /// Bundle id of the first known menu bar manager that's running, if any.
     /// Named in the log so a suppressed alert isn't a silent branch.
     private func runningMenuBarManager() -> String? {
-        let bundleIDs = [
-            "com.surteesstudios.Bartender",
-            "com.jordanbaird.Ice",
-            "com.jordanbaird.ice",
-            "com.stonerl.Thaw"
-        ]
-        return bundleIDs.first { bundleID in
+        Self.menuBarManagerBundleIDs.first { bundleID in
             !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
         }
     }
