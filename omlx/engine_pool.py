@@ -3635,6 +3635,9 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=getattr(
+                            model_settings, "enable_thinking", None
+                        ),
                         prefill_eviction_callback=prefill_eviction_callback,
                     )
                 elif entry.engine_type == "audio_stt":
@@ -3652,6 +3655,9 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=getattr(
+                            model_settings, "enable_thinking", None
+                        ),
                         prefill_eviction_callback=prefill_eviction_callback,
                     )
 
@@ -3688,6 +3694,9 @@ class EnginePool:
                             trust_remote_code=trc,
                             scheduler_config=self._scheduler_config,
                             model_settings=model_settings,
+                            enable_thinking=getattr(
+                                model_settings, "enable_thinking", None
+                            ),
                             prefill_eviction_callback=prefill_eviction_callback,
                         )
                     else:
@@ -3696,6 +3705,9 @@ class EnginePool:
                             trust_remote_code=trc,
                             scheduler_config=self._scheduler_config,
                             model_settings=model_settings,
+                            enable_thinking=getattr(
+                                model_settings, "enable_thinking", None
+                            ),
                             prefill_eviction_callback=prefill_eviction_callback,
                         )
                     try:
@@ -3734,6 +3746,9 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=getattr(
+                            model_settings, "enable_thinking", None
+                        ),
                         prefill_eviction_callback=prefill_eviction_callback,
                     )
                     try:
@@ -3770,6 +3785,9 @@ class EnginePool:
                         trust_remote_code=trc,
                         scheduler_config=self._scheduler_config,
                         model_settings=model_settings,
+                        enable_thinking=getattr(
+                            model_settings, "enable_thinking", None
+                        ),
                         prefill_eviction_callback=prefill_eviction_callback,
                     )
                     try:

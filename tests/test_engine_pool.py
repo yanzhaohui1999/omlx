@@ -1266,6 +1266,185 @@ class TestVLMFallback:
         assert isinstance(excinfo.value.__cause__.__cause__, TypeError)
 
 
+class TestEnableThinkingEngineWiring:
+    """``model_settings.enable_thinking`` must reach every engine
+    construction site in ``_load_engine``, not just the distributed one
+    (#4222). The distributed path has threaded it since it was added; the
+    six Batched/VLM sites silently dropped it."""
+
+    @staticmethod
+    def _mock_engine(start_error=None):
+        engine = MagicMock()
+        engine.start = AsyncMock(side_effect=start_error)
+        engine.stop = AsyncMock()
+        return engine
+
+    @staticmethod
+    def _failing_dflash():
+        # _load_engine detects the drafter by class name, so a MagicMock
+        # would fall through to the VLM/LLM fallback branches instead.
+        class DFlashEngine:
+            pass
+
+        engine = DFlashEngine()
+        engine.start = AsyncMock(side_effect=RuntimeError("draft load failed"))
+        engine.stop = AsyncMock()
+        return engine
+
+    @staticmethod
+    def _as_vlm(pool, model_id="model-a"):
+        entry = pool.get_entry(model_id)
+        entry.model_type = "vlm"
+        entry.engine_type = "vlm"
+        return entry
+
+    def _pool(self, model_dir):
+        pool = _make_pool(ceiling=10 * 1024**3)
+        pool.discover_models(str(model_dir))
+        return pool
+
+    @pytest.mark.asyncio
+    async def test_batched_site_receives_setting(self, small_mock_model_dir):
+        pool = self._pool(small_mock_model_dir)
+
+        with patch(
+            "omlx.engine_pool.BatchedEngine",
+            return_value=self._mock_engine(),
+        ) as batched:
+            await pool._load_engine(
+                "model-a", runtime_settings=ModelSettings(enable_thinking=False)
+            )
+
+        assert batched.call_args.kwargs["enable_thinking"] is False
+
+    @pytest.mark.asyncio
+    async def test_vlm_site_receives_setting(self, small_mock_model_dir):
+        pool = self._pool(small_mock_model_dir)
+        self._as_vlm(pool)
+
+        with patch(
+            "omlx.engine_pool.VLMBatchedEngine",
+            return_value=self._mock_engine(),
+        ) as vlm:
+            await pool._load_engine(
+                "model-a", runtime_settings=ModelSettings(enable_thinking=True)
+            )
+
+        assert vlm.call_args.kwargs["enable_thinking"] is True
+
+    @pytest.mark.asyncio
+    async def test_missing_settings_forward_none(self, small_mock_model_dir):
+        """No settings manager must stay a no-op, not a TypeError."""
+        pool = self._pool(small_mock_model_dir)
+
+        with patch(
+            "omlx.engine_pool.BatchedEngine",
+            return_value=self._mock_engine(),
+        ) as batched:
+            await pool._load_engine("model-a")
+
+        assert batched.call_args.kwargs["enable_thinking"] is None
+
+    @pytest.mark.asyncio
+    async def test_dflash_fallback_batched_site_receives_setting(
+        self, small_mock_model_dir
+    ):
+        pool = self._pool(small_mock_model_dir)
+        settings = ModelSettings(
+            enable_thinking=False,
+            dflash_enabled=True,
+            dflash_draft_model="/draft",
+        )
+        dflash = self._failing_dflash()
+
+        with (
+            patch("omlx.engine.dflash.DFlashEngine", return_value=dflash),
+            patch(
+                "omlx.engine_pool.BatchedEngine",
+                return_value=self._mock_engine(),
+            ) as batched,
+        ):
+            await pool._load_engine("model-a", runtime_settings=settings)
+
+        assert batched.call_args.kwargs["enable_thinking"] is False
+
+    @pytest.mark.asyncio
+    async def test_dflash_fallback_vlm_site_receives_setting(
+        self, small_mock_model_dir
+    ):
+        pool = self._pool(small_mock_model_dir)
+        self._as_vlm(pool)
+        settings = ModelSettings(
+            enable_thinking=False,
+            dflash_enabled=True,
+            dflash_draft_model="/draft",
+        )
+        dflash = self._failing_dflash()
+
+        with (
+            patch("omlx.engine.dflash.DFlashEngine", return_value=dflash),
+            patch(
+                "omlx.engine_pool.VLMBatchedEngine",
+                return_value=self._mock_engine(),
+            ) as vlm,
+        ):
+            await pool._load_engine("model-a", runtime_settings=settings)
+
+        assert vlm.call_args.kwargs["enable_thinking"] is False
+
+    @pytest.mark.asyncio
+    async def test_force_lm_vlm_fallback_site_receives_setting(
+        self, small_mock_model_dir
+    ):
+        pool = self._pool(small_mock_model_dir)
+        self._as_vlm(pool)
+        failed = self._mock_engine(start_error=RuntimeError("no lm path"))
+
+        with (
+            patch(
+                "omlx.engine_pool.BatchedEngine",
+                return_value=failed,
+            ) as batched,
+            patch(
+                "omlx.engine_pool.VLMBatchedEngine",
+                return_value=self._mock_engine(),
+            ) as vlm,
+        ):
+            await pool._load_engine(
+                "model-a",
+                force_lm=True,
+                runtime_settings=ModelSettings(enable_thinking=False),
+            )
+
+        assert batched.call_args.kwargs["enable_thinking"] is False
+        assert vlm.call_args.kwargs["enable_thinking"] is False
+
+    @pytest.mark.asyncio
+    async def test_vlm_to_llm_fallback_site_receives_setting(
+        self, small_mock_model_dir
+    ):
+        pool = self._pool(small_mock_model_dir)
+        self._as_vlm(pool)
+        failed = self._mock_engine(start_error=RuntimeError("no vision tower"))
+
+        with (
+            patch(
+                "omlx.engine_pool.VLMBatchedEngine",
+                return_value=failed,
+            ) as vlm,
+            patch(
+                "omlx.engine_pool.BatchedEngine",
+                return_value=self._mock_engine(),
+            ) as batched,
+        ):
+            await pool._load_engine(
+                "model-a", runtime_settings=ModelSettings(enable_thinking=False)
+            )
+
+        assert vlm.call_args.kwargs["enable_thinking"] is False
+        assert batched.call_args.kwargs["enable_thinking"] is False
+
+
 class TestEnginePoolLRU:
     """Tests for LRU eviction logic."""
 
