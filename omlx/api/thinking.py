@@ -151,22 +151,27 @@ def extract_thinking(text: str, *, truncated: bool = False) -> Tuple[str, str]:
     - Partial (no open tag): ``reasoning</think>answer`` → ``("reasoning", "answer")``
     - Empty think: ``<think></think>answer`` → ``("", "answer")``
     - Think only: ``<think>reasoning</think>`` → ``("reasoning", "")``
-    - Malformed (open with no close): ``<think>everything…`` →
-      ``("", "everything…")`` — recovery for V4-style models that
-      occasionally skip the ``</think>`` boundary token. Without this
-      fallback the entire body would be classified as thinking and the
-      visible answer would be empty.
+    - Unclosed: ``<think>everything…`` → ``("everything…", "")`` — the
+      response ended while the model was still inside the thinking
+      block (a ``max_tokens`` cut, or a stop string / EOS mid-reasoning),
+      so the body is unfinished reasoning rather than an answer (#4233).
+      Only a block at the head of the response counts: a ``<think>``
+      appearing after real text is literal content, which structured
+      output can carry as an ordinary string.
 
-    With ``truncated=True``, unfinished thinking stays in the thinking channel.
+    With ``truncated=True``, the same holds for a ``<think>`` that reopens
+    after an already-closed block.
 
-    Tag-free text is always classified as content. Mirrors
-    ``ThinkingParser.finish()`` recovery semantics (`_content_emitted`
-    fallback): when the model emits no thinking markers, surface the body
-    as the answer so the response is never empty.
+    Tag-free text is always classified as content: when the model emits no
+    thinking markers, surface the body as the answer so the response is
+    never empty. An unclosed ``<think>`` is not tag-free text — the model
+    demonstrably was reasoning, so the answer stays empty and the client
+    sees the chain of thought only in the thinking channel.
 
     Args:
         text: Complete model output text.
-        truncated: Keep unfinished thinking in its channel on length termination.
+        truncated: Keep an unclosed ``<think>`` that reopens after a closed
+            block in the thinking channel on length termination.
 
     Returns:
         Tuple of (thinking_content, regular_content).
@@ -209,12 +214,20 @@ def extract_thinking(text: str, *, truncated: bool = False) -> Tuple[str, str]:
             remaining = text[match.end():].strip()
             return (thinking, remaining)
 
-    # Malformed: <think> opened but never closed. Drop the open tag and
-    # treat the remainder as content so the answer body is not empty.
-    if '<think>' in text and '</think>' not in text:
-        idx = text.index('<think>')
-        before = text[:idx]
-        after = text[idx + _OPEN_LEN:]
+    # Unclosed <think> at the head of the response: it ended while the
+    # model was still inside its thinking block — a max_tokens cut
+    # (`truncated`) or a stop string / EOS mid-reasoning (#4233). Either
+    # way the tail is reasoning the model never finished, not an answer,
+    # so keep it in the thinking channel and leave content empty, exactly
+    # like the `truncated` branch above. The head position matters: the
+    # block is the one the prompt pre-opened or the model opened first,
+    # never a literal tag inside an answer.
+    if _OPEN_TAG in text and _CLOSE_TAG not in text:
+        before, after = text.split(_OPEN_TAG, 1)
+        if not before.strip():
+            return (after.strip(), "")
+        # A <think> after real text is literal content — structured
+        # output can carry the tag as an ordinary string (issue #3884).
         return ("", (before + after).strip())
 
     return ("", text)

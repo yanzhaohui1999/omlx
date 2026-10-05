@@ -54,14 +54,14 @@ class TestExtractThinking:
         assert "Step 1" in thinking
         assert content == "Final answer"
 
-    def test_open_tag_no_close_recovers_as_content(self):
-        """Model opened ``<think>`` but never closed it — non-streaming
-        path treats the body as content (matching the streaming
-        recovery in ThinkingParser.finish())."""
-        from omlx.api.thinking import extract_thinking
+    def test_open_tag_no_close_keeps_body_as_thinking(self):
+        """Model opened ``<think>`` and ended its turn without closing it:
+        the body is unfinished reasoning, not an answer (#4233). Same
+        treatment as a ``max_tokens`` cut — the reasoning stays in the
+        thinking channel and content is empty."""
         thinking, content = extract_thinking("<think>\nthe whole answer body")
-        assert thinking == ""
-        assert content == "the whole answer body"
+        assert thinking == "the whole answer body"
+        assert content == ""
 
     def test_partial_no_open_tag(self):
         """Content before </think> without <think> tag (scheduler prefix case)."""
@@ -113,6 +113,36 @@ class TestExtractThinking:
         )
         assert thinking == "thought process"
         assert content == "visible answer"
+
+    def test_eos_inside_unclosed_think_is_not_the_answer(self):
+        """Issue #4233: ``finish_reason=stop`` (EOS inside the pre-opened
+        ``<think>``) used to reclassify the whole reasoning as
+        ``content`` with ``reasoning_content`` null, so the client could
+        not tell the chain of thought from an answer. An unclosed
+        ``<think>`` now behaves exactly like the ``truncated=True`` case
+        for every termination reason."""
+        assert extract_thinking("<think>reasoning", truncated=False) == (
+            "reasoning",
+            "",
+        )
+        assert extract_thinking("<think>reasoning", truncated=True) == (
+            "reasoning",
+            "",
+        )
+
+    def test_literal_think_tag_after_content_stays_content(self):
+        """Only a block at the head of the response is unfinished
+        thinking. A ``<think>`` appearing after real text is literal
+        content — structured output carries the tag as an ordinary
+        string (issue #3884), so the rest of the answer must survive
+        instead of being reclassified as reasoning."""
+        thinking, content = extract_thinking('{"tag": "<think>", "n": 1}')
+        assert thinking == ""
+        assert content == '{"tag": "", "n": 1}'
+
+        thinking, content = extract_thinking("Use the tag <think> to open.")
+        assert thinking == ""
+        assert content == "Use the tag  to open."
 
 
 class TestThinkingParser:
@@ -443,6 +473,29 @@ class TestCleanOutputTextBackwardCompat:
 )
 def test_extract_truncated_thinking_preserves_channels(text, expected):
     assert extract_thinking(text, truncated=True) == expected
+
+
+@pytest.mark.parametrize(
+    "text, truncated, expected",
+    [
+        # Closed block — the ordinary case.
+        ("<think>reasoning</think>answer", False, ("reasoning", "answer")),
+        # Prompt pre-opened `<think>`: no opening tag in the output, but a
+        # closing tag is there, so this is NOT the unclosed shape.
+        ("reasoning</think>answer", False, ("reasoning", "answer")),
+        # max_tokens cut inside the block.
+        ("<think>reasoning", True, ("reasoning", "")),
+        # #4233: EOS / stop string inside the block.
+        ("<think>reasoning", False, ("reasoning", "")),
+        # Thinking disabled: tag-free text is always the answer.
+        ("answer", False, ("", "answer")),
+        ("", False, ("", "")),
+    ],
+)
+def test_extract_thinking_termination_does_not_change_channels(
+    text, truncated, expected
+):
+    assert extract_thinking(text, truncated=truncated) == expected
 
 
 @pytest.mark.parametrize("prompt_opened", [False, True])
