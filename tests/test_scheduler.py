@@ -7570,15 +7570,28 @@ class TestStopStringOutputBuffer:
     @pytest.mark.parametrize("use_parser", [False, True])
     @pytest.mark.parametrize("terminal_reason", ["length", "stop"])
     @pytest.mark.parametrize(
-        "pieces, stops, expected",
+        "pieces, stops, expected, matched",
         [
-            (["START_A", " STOP", "_MARK", " END_B"], ["STOP_MARK"], "START_A "),
-            (["START_A", " STOP", "_MARK"], ["STOP_MARK"], "START_A "),
-            (["START_A STOP_MARK END_B"], ["STOP_MARK"], "START_A "),
-            (["잠 START_A", " STOP", "_MARK"], ["STOP_MARK"], "잠 START_A "),
-            (["START_A", " <thi"], ["<thi"], "START_A "),
-            (["START_A STOP_MARK END_B"], ["END_B", "STOP_MARK"], "START_A "),
-            (["<think>reason", " STOP", "_MARK"], ["STOP_MARK"], "<think>reason "),
+            (["START_A", " STOP", "_MARK", " END_B"], ["STOP_MARK"], "START_A ", True),
+            (["START_A", " STOP", "_MARK"], ["STOP_MARK"], "START_A ", True),
+            (["START_A STOP_MARK END_B"], ["STOP_MARK"], "START_A ", True),
+            (["잠 START_A", " STOP", "_MARK"], ["STOP_MARK"], "잠 START_A ", True),
+            (["START_A", " <thi"], ["<thi"], "START_A ", True),
+            (
+                ["START_A STOP_MARK END_B"],
+                ["END_B", "STOP_MARK"],
+                "START_A ",
+                True,
+            ),
+            # #3943: a stop string inside a think block the model never closes
+            # is reasoning, not a stop, so the full text is expected back and
+            # the terminal reason is whatever ended generation.
+            (
+                ["<think>reason", " STOP", "_MARK"],
+                ["STOP_MARK"],
+                "<think>reason STOP_MARK",
+                False,
+            ),
         ],
     )
     def test_text_stop_with_protocol_parser(
@@ -7590,6 +7603,7 @@ class TestStopStringOutputBuffer:
         pieces,
         stops,
         expected,
+        matched,
     ):
         from omlx.patches.deepseek_v41 import output_parser
 
@@ -7619,7 +7633,7 @@ class TestStopStringOutputBuffer:
         assert finished == {request.request_id}
         assert "".join(output.new_text for output in outputs) == expected
         assert outputs[-1].output_text == expected
-        assert outputs[-1].finish_reason == "stop"
+        assert outputs[-1].finish_reason == ("stop" if matched else terminal_reason)
         assert sum(output.finished for output in outputs) == 1
 
     def test_partial_stop_prefix_is_flushed_on_eos(self, mock_model):
@@ -7693,6 +7707,247 @@ class TestStopStringOutputBuffer:
         assert streamed_text == "잠"
         assert outputs[-1].output_text == "잠"
         assert "�" not in streamed_text
+
+
+class TestStopStringThinkBoundary:
+    """Stop strings must not match inside the reasoning block (#3943)."""
+
+    def _harness(self):
+        return TestStopStringOutputBuffer()
+
+    def _prepare(self, mock_model, pieces, stops, needs_think_prefix=False):
+        scheduler = self._harness()._setup(mock_model)
+        request = scheduler.running["stop-output"]
+        request.sampling_params.stop = list(stops)
+        if needs_think_prefix:
+            request.needs_think_prefix = True
+        scheduler.tokenizer.pieces = {
+            **scheduler.tokenizer.pieces,
+            **dict(enumerate(pieces, 100)),
+        }
+        scheduler._build_state_machine(request)
+        return scheduler, request
+
+    def _generate(self, scheduler, pieces, terminal_reason="stop"):
+        make_response = self._harness()._response
+        responses = [make_response(100 + i) for i in range(len(pieces))]
+        if terminal_reason == "stop":
+            responses.append(
+                make_response(scheduler.tokenizer.eos_token_id, "stop")
+            )
+        else:
+            responses[-1].finish_reason = terminal_reason
+        return scheduler._process_batch_responses(responses)
+
+    @staticmethod
+    def _streamed(outputs):
+        return "".join(output.new_text for output in outputs)
+
+    def test_stop_string_inside_prompt_opened_reasoning_is_ignored(self, mock_model):
+        """The reported defect: reasoning is cut before the answer starts."""
+        pieces = [
+            "Count: 1 2 3 4 5 6 7 8 9",
+            " 10",
+            " done.\n",
+            "</think>\n\n",
+            "The answer is 7",
+            ".",
+        ]
+        scheduler, request = self._prepare(
+            mock_model, pieces, ["10"], needs_think_prefix=True
+        )
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].output_text == (
+            "Count: 1 2 3 4 5 6 7 8 9 10 done.\n</think>\n\nThe answer is 7."
+        )
+
+    def test_stop_string_inside_model_opened_reasoning_is_ignored(self, mock_model):
+        """A <think> the model opens itself also shields the reasoning."""
+        pieces = [
+            "<think>\nCount: 1 2 3 4 5 6 7 8 9",
+            " 10",
+            " done.\n</think>\n\n",
+            "The answer is 7",
+            ".",
+        ]
+        scheduler, request = self._prepare(mock_model, pieces, ["10"])
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].output_text == (
+            "<think>\nCount: 1 2 3 4 5 6 7 8 9 10 done.\n</think>\n\n"
+            "The answer is 7."
+        )
+
+    def test_stop_string_in_answer_after_reasoning_still_stops(self, mock_model):
+        """Matching resumes at the first answer token after reasoning closes."""
+        pieces = [
+            "Reasoning 10 here.\n",
+            "</think>\n\n",
+            "The answer is 7",
+            ". END",
+        ]
+        scheduler, request = self._prepare(
+            mock_model, pieces, [" END"], needs_think_prefix=True
+        )
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].finish_reason == "stop"
+        assert outputs[-1].output_text.endswith("The answer is 7.")
+        assert " END" not in outputs[-1].output_text
+
+    def test_stop_string_spanning_think_end_boundary_is_ignored(self, mock_model):
+        """A match starting before </think> must not terminate the request."""
+        pieces = ["Count to 10. </thi", "nk>\n\n", "The answer is 7", "."]
+        scheduler, request = self._prepare(
+            mock_model, pieces, ["10. </think>"], needs_think_prefix=True
+        )
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].output_text == (
+            "Count to 10. </think>\n\nThe answer is 7."
+        )
+
+    def test_unterminated_reasoning_never_matches_stop_string(self, mock_model):
+        """A model that never closes reasoning ends on EOS, not on a stop."""
+        pieces = ["<think>\nStill counting to 10", " 10", " 11", " 12"]
+        scheduler, request = self._prepare(mock_model, pieces, ["11"])
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].output_text == "<think>\nStill counting to 10 10 11 12"
+
+    def test_request_without_reasoning_is_unaffected(self, mock_model):
+        """Thinking disabled: stop strings match on the first token as before."""
+        pieces = ["Plain answer with 10 in it", " and more", " END"]
+        scheduler, request = self._prepare(mock_model, pieces, [" END"])
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].finish_reason == "stop"
+        assert outputs[-1].output_text == "Plain answer with 10 in it and more"
+
+    def test_think_tag_inside_an_answer_does_not_open_reasoning(self, mock_model):
+        """Only a tag the model opens with starts reasoning, not one mid-answer."""
+        pieces = ["Show me a <think>", " tag example STOP_MARK", " rest"]
+        scheduler, request = self._prepare(mock_model, pieces, ["STOP_MARK"])
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].finish_reason == "stop"
+        assert outputs[-1].output_text == "Show me a <think> tag example "
+
+    def test_stop_string_in_code_block_after_reasoning_still_stops(self, mock_model):
+        """A stop string that legitimately appears in code still matches."""
+        pieces = [
+            "Thinking about it.\n",
+            "</think>\n\n",
+            "```python\n",
+            "for i in range(10):",
+            "\n    print('END')",
+            "\n```",
+            " tail",
+        ]
+        scheduler, request = self._prepare(
+            mock_model, pieces, ["print('END')"], needs_think_prefix=True
+        )
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].finish_reason == "stop"
+        assert outputs[-1].output_text.endswith("```python\nfor i in range(10):\n    ")
+        assert "print('END')" not in outputs[-1].output_text
+
+    def test_stop_string_that_is_a_prefix_of_another_still_stops(self, mock_model):
+        """Overlapping stop strings must not swallow each other."""
+        pieces = [
+            "Reasoning.\n",
+            "</think>\n\n",
+            "value = END",
+            "MARK tail",
+        ]
+        scheduler, request = self._prepare(
+            mock_model,
+            pieces,
+            ["END", "ENDMARK"],
+            needs_think_prefix=True,
+        )
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert outputs[-1].finish_reason == "stop"
+        assert outputs[-1].output_text.endswith("value = ")
+
+    def test_thinking_request_keeps_stop_strings_out_of_token_automaton(
+        self, mock_model
+    ):
+        """Stop-string tokens cannot evict the stream from inside reasoning."""
+        scheduler = self._harness()._setup(mock_model)
+        request = scheduler.running["stop-output"]
+        request.sampling_params.stop = ["10"]
+        request.needs_think_prefix = True
+
+        matcher = scheduler._build_state_machine(request).matcher()
+
+        # 99 is the standalone encoding of "10" for this tokenizer.
+        assert not any(matcher.advance(token) for token in [99])
+
+    def test_non_thinking_request_still_matches_stop_strings_in_automaton(
+        self, mock_model
+    ):
+        """Requests that cannot reason keep token-level stop detection."""
+        scheduler = self._harness()._setup(mock_model)
+        request = scheduler.running["stop-output"]
+        request.sampling_params.stop = ["10"]
+
+        matcher = scheduler._build_state_machine(request).matcher()
+
+        assert any(matcher.advance(token) for token in [99])
+
+    @pytest.mark.parametrize("use_parser", [False, True])
+    def test_stop_string_inside_reasoning_is_ignored_with_protocol_parser(
+        self, mock_model, monkeypatch, use_parser
+    ):
+        from omlx.patches.deepseek_v41 import output_parser
+
+        pieces = [
+            "<think>\nCount: 1 2 3 4 5 6 7 8 9",
+            " 10",
+            " done.\n</think>\n\n",
+            "The answer is 7",
+            ".",
+        ]
+        scheduler, request = self._prepare(mock_model, pieces, ["10"])
+        if use_parser:
+            monkeypatch.setattr(
+                output_parser,
+                "create_streaming_detokenizer",
+                lambda tokenizer, model_path: _StopSequenceDetokenizer(tokenizer),
+            )
+            session = output_parser.DeepSeekV41OutputParserSession(
+                scheduler.tokenizer
+            )
+            scheduler._output_parser_sessions[request.request_id] = session
+            scheduler._get_output_parser_session = lambda request_id: session
+
+        outputs, finished = self._generate(scheduler, pieces)
+
+        assert finished == {request.request_id}
+        assert "10 done." in outputs[-1].output_text
+        assert outputs[-1].output_text.endswith("The answer is 7.")
 
 
 class TestTurboQuantMLAGuard:
