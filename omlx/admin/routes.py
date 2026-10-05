@@ -7789,6 +7789,67 @@ async def list_hf_models(is_admin: bool = Depends(require_admin)):
     return {"models": models}
 
 
+# Discovery reports a cache model by its route-safe id (``Org--Name``), which
+# is the repo id with ``/`` turned into ``--``; the cache folder adds the
+# ``models--`` prefix. Only that one shape is accepted, and the folder name is
+# built by prepending the prefix rather than by joining user input, so a model
+# name can never carry a separator, a parent reference or an absolute path into
+# a cache delete (#4229).
+_HF_CACHE_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _resolve_hf_cache_delete_target(
+    model_name: str, global_settings
+) -> tuple[Path, Path] | None:
+    """Map an ``Org--Name`` model id to (models--Org--Name, hub_cache_dir).
+
+    Discovery scans the shared HF cache (``get_effective_model_dirs`` adds it),
+    so cache-resident models show up in the dashboard and in
+    ``/v1/models/status``, while the delete search only walks oMLX's own model
+    directories and 404s on exactly those models (#4229).
+
+    Only the one repo folder directly under the hub cache root is returned, and
+    only after the resolved path is confirmed to still be that direct child.
+    The HF layout keeps ``blobs/``, ``refs/`` and ``snapshots/`` *inside* the
+    per-repo ``models--*`` tree, so removing that folder reclaims the repo's
+    disk without touching the hub root, sibling repos, or dataset caches.
+    Anything that does not resolve to that folder is refused, not deleted.
+    """
+    if not _HF_CACHE_MODEL_ID_RE.match(model_name):
+        return None
+    if not getattr(global_settings.huggingface, "hf_cache_enabled", True):
+        # Discovery does not surface the cache while it is disabled, so the
+        # delete endpoint keeps that same view.
+        return None
+
+    entry_name = f"models--{model_name}"
+    try:
+        hub_dir = Path(global_settings.get_hf_cache_dir())
+        candidate = hub_dir / entry_name
+    except (TypeError, OSError, ValueError):
+        return None
+
+    # A symlinked entry could resolve anywhere; refuse it instead of following.
+    if candidate.is_symlink() or not candidate.is_dir():
+        return None
+
+    try:
+        hub_root = hub_dir.resolve()
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if resolved.parent != hub_root or not resolved.name.startswith("models--"):
+        logger.warning(
+            "Refusing to delete HF cache entry %r: does not resolve to a "
+            "models--* folder directly under %s",
+            entry_name,
+            hub_root,
+        )
+        return None
+
+    return candidate, hub_dir
+
+
 @router.delete("/api/hf/models/{model_name}")
 async def delete_hf_model(
     model_name: str,
@@ -7826,6 +7887,16 @@ async def delete_hf_model(
         if model_path is not None:
             break
 
+    # Fall back to the shared HF Hub cache so cache-resident models are
+    # deletable like any other listed model (#4229). Configured dirs still win,
+    # so a local copy is never shadowed by the cache entry of the same name.
+    hf_cache_entry = None
+    if model_path is None:
+        cache_target = _resolve_hf_cache_delete_target(model_name, global_settings)
+        if cache_target is not None:
+            model_path, parent_model_dir = cache_target
+            hf_cache_entry = model_path
+
     if model_path is None:
         raise HTTPException(status_code=404, detail="Model not found")
 
@@ -7838,6 +7909,15 @@ async def delete_hf_model(
 
     if not model_path.is_dir():
         raise HTTPException(status_code=400, detail="Not a model directory")
+
+    if hf_cache_entry is not None:
+        # This removes the repo's whole cache folder, blobs included, so any
+        # other tool sharing this HF cache re-downloads that one repo.
+        logger.warning(
+            "Deleting HF Hub cache entry for '%s' from shared cache: %s",
+            model_name,
+            hf_cache_entry,
+        )
 
     # Unload model if loaded
     if engine_pool is not None:

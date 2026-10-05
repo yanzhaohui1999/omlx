@@ -1511,6 +1511,369 @@ class TestHFDownloaderRoutes:
             routes_module._get_engine_pool = orig_pool
             routes_module._get_settings_manager = orig_mgr
 
+    # ------------------------------------------------------------------
+    # HF Hub cache entries (#4229)
+    #
+    # Discovery scans the shared HF cache (get_effective_model_dirs adds it),
+    # so /v1/models/status lists cache-resident models while the delete
+    # handler only searched the configured model dirs and 404'd on them.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_hf_cache_entry(hub_dir, repo_id, *, commit="a" * 40, weight=b"w" * 32):
+        """Build a realistic ``models--Org--Name/`` cache folder.
+
+        Returns (model_id, repo_dir, snapshot_dir) where ``model_id`` is the
+        route-safe name discovery reports (e.g. ``org--name``).
+        """
+        repo_dir = hub_dir / ("models--" + repo_id)
+        (repo_dir / "blobs").mkdir(parents=True)
+        blob = repo_dir / "blobs" / ("b" * 40)
+        blob.write_bytes(weight)
+
+        snapshot = repo_dir / "snapshots" / commit
+        snapshot.mkdir(parents=True)
+        # Snapshot files are symlinks into ../../blobs, like the real cache.
+        (snapshot / "model.safetensors").symlink_to(
+            os.path.join("..", "..", "blobs", blob.name)
+        )
+        (snapshot / "config.json").write_text('{"architectures": ["Qwen2ForCausalLM"]}')
+
+        (repo_dir / "refs").mkdir()
+        (repo_dir / "refs" / "main").write_text(commit + "\n")
+
+        model_id = repo_id.replace("/", "--")
+        return model_id, repo_dir, snapshot
+
+    @staticmethod
+    def _install_delete_mocks(routes_module, model_dirs, hub_dir, *, hf_cache=True):
+        """Patch the module-level accessors delete_hf_model depends on."""
+        mock_settings = MagicMock()
+        mock_settings.model.get_model_dirs.return_value = list(model_dirs)
+        mock_settings.get_hf_cache_dir.return_value = hub_dir
+        mock_settings.huggingface.hf_cache_enabled = hf_cache
+
+        mock_pool = MagicMock()
+        mock_pool.get_loaded_model_ids.return_value = []
+        mock_pool._entries = {}
+        mock_pool.discover_models = MagicMock()
+
+        mock_settings_mgr = MagicMock()
+        mock_settings_mgr.get_pinned_model_ids.return_value = []
+
+        saved = (
+            routes_module._get_global_settings,
+            routes_module._get_engine_pool,
+            routes_module._get_settings_manager,
+        )
+        routes_module._get_global_settings = lambda: mock_settings
+        routes_module._get_engine_pool = lambda: mock_pool
+        routes_module._get_settings_manager = lambda: mock_settings_mgr
+        return saved, mock_settings_mgr
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_model_removes_only_that_repo_folder(self, tmp_path):
+        """A cache-resident model must delete, reclaiming blobs but sparing all else."""
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+
+        model_id, repo_dir, _ = self._make_hf_cache_entry(hub_dir, "org--name")
+        assert model_id == "org--name"
+        # A second repo and a dataset cache entry must both survive.
+        _keep_id, keep_dir, _ = self._make_hf_cache_entry(hub_dir, "other--repo")
+        dataset_dir = hub_dir / "datasets--org--ds"
+        dataset_dir.mkdir()
+        (dataset_dir / "keep.txt").write_text("x")
+
+        saved, settings_mgr = self._install_delete_mocks(
+            routes_module, [model_dir], hub_dir
+        )
+        try:
+            result = await delete_hf_model(model_name=model_id, is_admin=True)
+            assert result["success"] is True
+            assert not repo_dir.exists()
+            # No globbing: sibling repo, dataset cache and hub root all intact.
+            assert keep_dir.exists()
+            assert (keep_dir / "blobs").is_dir()
+            assert dataset_dir.exists()
+            assert hub_dir.is_dir()
+            settings_mgr.delete_settings.assert_called_once_with(model_id)
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_partial_download_without_snapshot(self, tmp_path):
+        """blobs present, snapshots/ and refs/ missing: still deletable."""
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        repo_dir = hub_dir / "models--org--name"
+        (repo_dir / "blobs").mkdir(parents=True)
+        (repo_dir / "blobs" / ("c" * 40)).write_bytes(b"z" * 16)
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            result = await delete_hf_model(model_name="org--name", is_admin=True)
+            assert result["success"] is True
+            assert not repo_dir.exists()
+            assert hub_dir.is_dir()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_snapshot_without_ref_is_deletable(self, tmp_path):
+        """snapshots/<commit>/ present but refs/main missing: still deletable."""
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        repo_dir = hub_dir / "models--org--name"
+        snapshot = repo_dir / "snapshots" / ("d" * 40)
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.json").write_text("{}")
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            result = await delete_hf_model(model_name="org--name", is_admin=True)
+            assert result["success"] is True
+            assert not repo_dir.exists()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_unknown_entry_is_404(self, tmp_path):
+        """A well-formed cache name with no directory on disk stays a 404."""
+        from fastapi import HTTPException
+
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_hf_model(model_name="org--ghost", is_admin=True)
+            assert exc_info.value.status_code == 404
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "hostile_name",
+        [
+            "models--org--name/../../../../etc",
+            "../../../../etc",
+            "org--name/../../../..",
+        ],
+    )
+    async def test_delete_hf_cache_rejects_traversal(self, tmp_path, hostile_name):
+        """Traversal in the model name must never reach outside the hub cache."""
+        from fastapi import HTTPException
+
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+        canary = tmp_path / "canary"
+        canary.mkdir()
+        (canary / "config.json").write_text("{}")
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_hf_model(model_name=hostile_name, is_admin=True)
+            assert exc_info.value.status_code in (400, 404)
+            assert canary.is_dir()
+            assert (canary / "config.json").exists()
+            assert hub_dir.is_dir()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_rejects_absolute_model_name(self, tmp_path):
+        """An absolute path as model_name must not delete that path."""
+        from fastapi import HTTPException
+
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / "config.json").write_text("{}")
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_hf_model(model_name=str(victim), is_admin=True)
+            assert exc_info.value.status_code in (400, 404)
+            assert victim.is_dir()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_rejects_symlinked_entry(self, tmp_path):
+        """A models--* symlink pointing outside the cache must be refused."""
+        from fastapi import HTTPException
+
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "important.txt").write_text("do not delete")
+
+        (hub_dir / "models--evil--link").symlink_to(outside, target_is_directory=True)
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_hf_model(model_name="evil--link", is_admin=True)
+            assert exc_info.value.status_code in (400, 404)
+            assert outside.is_dir()
+            assert (outside / "important.txt").exists()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_respects_disabled_cache(self, tmp_path):
+        """With hf_cache_enabled=False the shared cache stays out of reach."""
+        from fastapi import HTTPException
+
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+        _, repo_dir, _ = self._make_hf_cache_entry(hub_dir, "org--name")
+
+        saved, _ = self._install_delete_mocks(
+            routes_module, [model_dir], hub_dir, hf_cache=False
+        )
+        try:
+            with pytest.raises(HTTPException) as exc_info:
+                await delete_hf_model(model_name="org--name", is_admin=True)
+            assert exc_info.value.status_code == 404
+            assert repo_dir.exists()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_prefers_configured_dir_over_cache(self, tmp_path):
+        """A local model wins over a same-named cache entry (unchanged behaviour)."""
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        local = model_dir / "org--name"
+        local.mkdir(parents=True)
+        (local / "config.json").write_text('{"architectures": ["Qwen2ForCausalLM"]}')
+
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+        _, repo_dir, _ = self._make_hf_cache_entry(hub_dir, "org--name")
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        try:
+            result = await delete_hf_model(model_name="org--name", is_admin=True)
+            assert result["success"] is True
+            assert not local.exists()
+            # The cache entry is a different folder and must survive.
+            assert repo_dir.exists()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
+    @pytest.mark.asyncio
+    async def test_delete_hf_cache_unload_and_rediscovery(self, tmp_path):
+        """A loaded cache model is unloaded before its folder is removed."""
+        import omlx.admin.routes as routes_module
+        from omlx.admin.routes import delete_hf_model
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        hub_dir = tmp_path / "hub"
+        hub_dir.mkdir()
+        _, repo_dir, _ = self._make_hf_cache_entry(hub_dir, "org--name")
+
+        saved, _ = self._install_delete_mocks(routes_module, [model_dir], hub_dir)
+        engine_pool = routes_module._get_engine_pool()
+        engine_pool.get_loaded_model_ids.return_value = ["org--name"]
+        engine_pool._unload_engine = AsyncMock()
+        try:
+            result = await delete_hf_model(model_name="org--name", is_admin=True)
+            assert result["success"] is True
+            engine_pool._unload_engine.assert_awaited_once_with("org--name")
+            assert not repo_dir.exists()
+            engine_pool.discover_models.assert_called_once()
+        finally:
+            (
+                routes_module._get_global_settings,
+                routes_module._get_engine_pool,
+                routes_module._get_settings_manager,
+            ) = saved
+
 
 # =============================================================================
 # Recommended Models Tests
