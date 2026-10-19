@@ -5603,7 +5603,9 @@ def _compile_grammar_for_request(
     When ``reasoning_parser`` is set (e.g. ``"qwen"``, ``"harmony"``),
     the user's grammar is wrapped in an xgrammar builtin structural tag
     so that protocol tokens (thinking tags, channel markers) are handled
-    automatically.  When not set, the grammar is compiled bare.
+    automatically.  gpt-oss gets the harmony tag without a configured parser
+    because the model emits the channel header itself.  Otherwise the grammar
+    is compiled bare.
 
     Returns a compiled grammar object or ``None``.  ``structured_outputs``
     raises :class:`HTTPException` when grammar is unavailable or fails to
@@ -5648,11 +5650,16 @@ def _compile_grammar_for_request(
         return None
 
     try:
-        if reasoning_parser:
+        parser = reasoning_parser
+        if parser is None and getattr(engine, "model_type", None) == "gpt_oss":
+            # gpt-oss starts its answer with the Harmony channel header, so a
+            # bare grammar masks the first token and the turn parses as empty.
+            parser = "harmony"
+        if parser:
             return _compile_with_structural_tag(
                 compiler,
                 fmt,
-                reasoning_parser,
+                parser,
                 chat_template_kwargs,
             )
         return _compile_bare_grammar(compiler, fmt)

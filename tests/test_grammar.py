@@ -617,6 +617,55 @@ class TestCompileGrammarForRequest:
         )
         compiler.compile_structural_tag.assert_not_called()
 
+    @requires_xgrammar
+    @patch("xgrammar.get_builtin_structural_tag")
+    def test_gpt_oss_uses_the_harmony_tag_without_reasoning_parser(self, mock_get_tag):
+        """A bare grammar masks the channel header gpt-oss generates itself."""
+        mock_tag = MagicMock()
+        mock_tag.model_dump.return_value = {
+            "type": "structural_tag",
+            "format": {"type": "any_text", "excludes": []},
+        }
+        mock_get_tag.return_value = mock_tag
+        compiler = MagicMock()
+        compiler.compile_structural_tag.return_value = "compiled_structural"
+        engine = _make_engine(grammar_compiler=compiler)
+        engine.model_type = "gpt_oss"
+
+        result = self._call(engine, response_format={"type": "json_object"})
+        assert result == "compiled_structural"
+        mock_get_tag.assert_called_once_with("harmony", reasoning=True)
+
+    @requires_xgrammar
+    def test_gpt_oss_grammar_accepts_the_channel_header(self):
+        """The first token may be <|channel|>, not only the JSON body."""
+        xgr = pytest.importorskip("xgrammar")
+        vocab = (
+            ["<unk>", "<s>", "</s>"]
+            + [chr(c) for c in range(32, 127)]
+            + [
+                "<|channel|>",
+                "<|message|>",
+                "<|start|>",
+                "<|end|>",
+                "<|return|>",
+                "assistant",
+                "final",
+                "analysis",
+            ]
+        )
+        engine = _make_engine(
+            grammar_compiler=xgr.GrammarCompiler(xgr.TokenizerInfo(vocab))
+        )
+        engine.model_type = "gpt_oss"
+
+        compiled = self._call(engine, response_format={"type": "json_object"})
+        matcher = xgr.GrammarMatcher(compiled)
+        bitmask = np.full((1, (len(vocab) + 31) // 32), -1, dtype=np.int32)
+        matcher.fill_next_token_bitmask(bitmask)
+        allowed = np.unpackbits(bitmask.view(np.uint8), bitorder="little")[: len(vocab)]
+        assert allowed[vocab.index("<|channel|>")]
+
     def test_compilation_error_raises_for_structured_outputs(self):
         from fastapi import HTTPException
         compiler = MagicMock()
