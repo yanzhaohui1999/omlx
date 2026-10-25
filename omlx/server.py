@@ -5114,10 +5114,18 @@ async def create_chat_completion(
         # Add compiled grammar for logit-level structured output.
         # When a reasoning_parser is configured, the structural tag includes
         # a thinking phase — auto-set a thinking_budget so the model exits
-        # the reasoning phase and the grammar can activate.
+        # the reasoning phase and the grammar can activate.  A whole-output
+        # grammar was compiled bare and governs the thinking phase itself, so
+        # forcing a budget there would truncate the reasoning it describes.
         if compiled_grammar is not None:
             chat_kwargs["compiled_grammar"] = compiled_grammar
-            if reasoning_parser and "thinking_budget" not in chat_kwargs:
+            if (
+                reasoning_parser
+                and "thinking_budget" not in chat_kwargs
+                and not _grammar_names_reasoning(
+                    _structured_outputs_grammar(structured_outputs)
+                )
+            ):
                 default_budget = min(max_tokens // 2, 4096)
                 chat_kwargs["thinking_budget"] = default_budget
                 logger.debug(
@@ -5702,6 +5710,38 @@ def _compile_bare_grammar(compiler, fmt: dict):
     return None
 
 
+# Markers a whole-output EBNF grammar uses to spell out the reasoning phase.
+# Deliberately a narrow allow-list: a grammar that never names them is treated
+# as an answer-only spec and keeps the structural-tag wrap.
+_REASONING_MARKERS = ("<think", "</think>", "<|channel|>")
+
+
+def _grammar_names_reasoning(grammar) -> bool:
+    """True when an EBNF grammar spells out the model's reasoning delimiters.
+
+    Such a grammar is a whole-output contract: it opens inside the thinking
+    block, so patching it into the reasoning parser's output slot applies it to
+    the visible answer only, lets the model reason outside the grammar, and
+    produces a second ``<think>`` block in the response channel (#3146).
+    Compile those bare so they constrain from token 0.  Grammars that only
+    describe the answer (``root ::= "YES"``) keep the structural-tag wrap and
+    still start after thinking.
+    """
+    if not isinstance(grammar, str):
+        return False
+    lowered = grammar.lower()
+    return any(marker in lowered for marker in _REASONING_MARKERS)
+
+
+def _structured_outputs_grammar(structured_outputs):
+    """Return the EBNF grammar from normalized structured outputs, if any."""
+    if isinstance(structured_outputs, dict):
+        grammar = structured_outputs.get("grammar")
+        if isinstance(grammar, str):
+            return grammar
+    return None
+
+
 def _response_format_requests_strict(response_format) -> bool:
     """True when an OpenAI ``response_format`` demands strict json_schema output.
 
@@ -5824,8 +5864,11 @@ def _compile_grammar_for_request(
             _warn_response_format_not_enforced(response_format)
         return None
 
+    whole_output_grammar = fmt["type"] == "grammar" and _grammar_names_reasoning(
+        fmt.get("grammar")
+    )
     try:
-        if reasoning_parser:
+        if reasoning_parser and not whole_output_grammar:
             return _compile_with_structural_tag(
                 compiler,
                 fmt,

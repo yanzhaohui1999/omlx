@@ -566,6 +566,67 @@ class TestCompileGrammarForRequest:
 
     @requires_xgrammar
     @patch("xgrammar.get_builtin_structural_tag")
+    def test_think_scoped_grammar_is_compiled_bare(self, mock_get_tag):
+        """A grammar that names the thinking tags owns the whole output.
+
+        Wrapping it into the reasoning parser's output slot applies it to the
+        visible answer only, so the model's own reasoning escapes the grammar
+        and the response channel gains a second <think> block (#3146).
+        """
+        pytest.importorskip("xgrammar")
+        mock_tag = MagicMock()
+        mock_tag.model_dump.return_value = {
+            "type": "structural_tag",
+            "format": {"type": "any_text", "excludes": []},
+        }
+        mock_get_tag.return_value = mock_tag
+
+        compiler = MagicMock()
+        compiler.compile_grammar.return_value = "compiled_bare"
+        engine = _make_engine(grammar_compiler=compiler)
+
+        ebnf = 'root ::= "<think>" free "</think>" answer'
+        result = self._call(
+            engine,
+            structured_outputs={"grammar": ebnf},
+            reasoning_parser="qwen",
+        )
+
+        assert result == "compiled_bare"
+        compiler.compile_grammar.assert_called_once_with(ebnf)
+        compiler.compile_structural_tag.assert_not_called()
+
+    @requires_xgrammar
+    @patch("xgrammar.get_builtin_structural_tag")
+    def test_answer_only_grammar_keeps_the_structural_tag(self, mock_get_tag):
+        """A grammar that never names the thinking tags keeps the answer slot.
+
+        This is the case the blanket switch in #3145 broke: ``root ::= "YES"``
+        must still start after thinking instead of applying from token 0.
+        """
+        pytest.importorskip("xgrammar")
+        mock_tag = MagicMock()
+        mock_tag.model_dump.return_value = {
+            "type": "structural_tag",
+            "format": {"type": "any_text", "excludes": []},
+        }
+        mock_get_tag.return_value = mock_tag
+
+        compiler = MagicMock()
+        compiler.compile_structural_tag.return_value = "compiled_structural"
+        engine = _make_engine(grammar_compiler=compiler)
+
+        result = self._call(
+            engine,
+            structured_outputs={"grammar": 'root ::= "YES"'},
+            reasoning_parser="qwen",
+        )
+
+        assert result == "compiled_structural"
+        compiler.compile_grammar.assert_not_called()
+
+    @requires_xgrammar
+    @patch("xgrammar.get_builtin_structural_tag")
     def test_reasoning_parser_uses_structural_tag(self, mock_get_tag):
         """When reasoning_parser is set, compile_structural_tag is used."""
         pytest.importorskip("xgrammar")
