@@ -1,8 +1,8 @@
 class Omlx < Formula
   desc "LLM inference server optimized for Apple Silicon"
   homepage "https://github.com/jundot/omlx"
-  url "https://github.com/jundot/omlx/archive/refs/tags/v0.7.1rc1.tar.gz"
-  sha256 "dc55b7a83054bf0cfc4e635ae1906414c7d1eeb10fec25248abe9000da3c263a"
+  url "https://github.com/jundot/omlx/archive/refs/tags/v0.7.3rc1.tar.gz"
+  sha256 "288b91b956a4d6bff3dffcaf1f6ba3fd84012fe2362f7d9d4777596b801a3d7c"
   license "Apache-2.0"
 
   head "https://github.com/jundot/omlx.git", branch: "main"
@@ -23,14 +23,10 @@ class Omlx < Formula
     skip_clean "libexec" if MacOS.version >= "27"
   end
 
-  # This resource installs the same mlx-audio revision pyproject.toml pins
-  # (packaging/build.py carries the same pin), so bump both together: a
-  # resource left behind reinstalls an older mlx-audio over the revision
-  # omlx's own install resolved — the 0.4.3 keg that violated mlx-vlm's
-  # `mlx-audio>=0.5.2` requirement in #3916.
+  # Same mlx-audio commit as pyproject.toml, installed with its [all] extras.
   resource "mlx-audio" do
     url "https://github.com/Blaizzy/mlx-audio.git",
-      revision: "94c7716212b2228f178d2f9c7619a591fd1b0b78"
+      revision: "8c244a1faff44cfa69e3151c195f52a4c1c90be5"
   end
 
   # Kokoro's English G2P path uses misaki + spaCy. Bundle the spaCy
@@ -89,13 +85,24 @@ class Omlx < Formula
     pip_install = [libexec/"bin/pip", "install", *pip_flags, "--no-binary", no_binary]
 
     if build.with?("custom-kernel")
-      # `metal` ships with Xcode, not the Command Line Tools.
-      unless quiet_system("/usr/bin/xcrun", "-f", "metal")
+      # Execute the compiler rather than looking for it. `xcrun -f metal` only
+      # asks whether a file named `metal` is on the search path, and since Xcode
+      # 26 that file is a shim that forwards to the separately downloaded Metal
+      # toolchain. The shim is present whether or not the toolchain behind it is
+      # usable, so the lookup succeeds and the build then fails much later with
+      # an opaque CMake error in the metallib targets. Running the compiler is
+      # the only check that agrees with whether the build will work.
+      unless quiet_system("/usr/bin/xcrun", "metal", "--version")
         odie <<~EOS
-          --with-custom-kernel requires the Metal compiler, but `xcrun -f metal` found none.
+          --with-custom-kernel requires the Metal compiler, but `xcrun metal --version` failed.
           It ships with full Xcode, and on current Xcode versions is a separate component:
 
             xcodebuild -downloadComponent MetalToolchain
+
+          If the component is already installed, a stale xcrun lookup cache causes this
+          same failure and is worth clearing first, because it costs nothing:
+
+            rm -f "${TMPDIR:-/tmp}/xcrun_db"
 
           Otherwise install omlx without the custom kernels: brew install omlx
         EOS
@@ -114,8 +121,8 @@ class Omlx < Formula
       ENV.append "CMAKE_ARGS", "-DPython_EXECUTABLE=#{libexec}/bin/python"
     end
 
-    # Install omlx with the [audio] extra (mlx-audio 0.5.x moved the audio
-    # stack out of its own "all" extra) plus the optional grammar extra.
+    # Install omlx with the [audio] extra, which declares spaCy, misaki,
+    # librosa and numba, plus the optional grammar extra.
     install_spec = build.with?("grammar") ? "#{buildpath}[audio,grammar]" : "#{buildpath}[audio]"
     system(*pip_install, install_spec)
 
@@ -127,10 +134,6 @@ class Omlx < Formula
       end
     end
 
-    # Reinstall mlx-audio from the resource pinned above. Its revision must
-    # stay equal to pyproject.toml's mlx-audio pin (asserted by
-    # tests/test_homebrew_formula.py); upstream 0.5.x also dropped the
-    # mlx-lm==0.31.1 pin this stage used to inreplace away.
     resource("mlx-audio").stage do
       system(*pip_install, ".[all]")
     end

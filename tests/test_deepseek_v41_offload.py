@@ -4,6 +4,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, current_thread
+from types import SimpleNamespace
 
 import mlx.core as mx
 import numpy as np
@@ -100,6 +101,52 @@ def test_prefetch_drains_before_unmap(tmp_path, monkeypatch):
     assert prefetch._pending is None
     prefetch.close()
     disk.close()
+
+
+@pytest.mark.parametrize("tokens,admitted", [(8192, True), (16645, False)])
+def test_wide_affine_prefetch_keeps_rows_and_enforces_bound(
+    tmp_path, monkeypatch, tokens, admitted
+):
+    # The 1017 converted checkpoint has 24 IDs/token and 160 packed bytes/row.
+    path = tmp_path / "affine.safetensors"
+    raw_safetensors(
+        path,
+        {
+            "w": (np.arange(16 * 32, dtype=np.uint32).reshape(16, 32), "U32"),
+            "s": (np.full((16, 8), 0x3F80, dtype=np.uint16), "BF16"),
+            "b": (np.zeros((16, 8), dtype=np.uint16), "BF16"),
+        },
+    )
+    disk = DiskEngramEmbedding(path, "w", "s", bias_key="b", bits=4)
+    prefetch = EngramPrefetch()
+    ids = (np.arange(tokens * 24, dtype=np.int64) % 16).reshape(1, tokens, 24)
+    read = disk._read_rows
+    threads = []
+
+    def observe(rows):
+        threads.append(current_thread().name)
+        return read(rows)
+
+    monkeypatch.setattr(disk, "_read_rows", observe)
+    try:
+        expected = read(ids)
+        with prefetch.forward():
+            prefetch.submit(disk, ids)
+            assert (prefetch._pending is not None) is admitted
+            if admitted:
+                actual = prefetch._pending[1].result(timeout=10)
+                np.testing.assert_array_equal(disk._prefetched[0], ids)
+                assert threads == ["v41-engram_0"]
+            else:
+                assert threads == []
+                actual = disk._read_rows(ids)
+            for (got, got_dtype), (want, want_dtype) in zip(actual, expected):
+                assert got_dtype == want_dtype
+                np.testing.assert_array_equal(got, want)
+        assert prefetch._pending is None and disk._prefetched is None
+    finally:
+        prefetch.close()
+        disk.close()
 
 
 def test_prefetch_forward_error_releases_pending_rows(tmp_path):
@@ -297,6 +344,69 @@ def test_model_close_unmaps_even_after_prefetch_failure(converted, monkeypatch):
         if "engram" in layer:
             assert layer.engram.embed._weights._mapping is None
     model.close()
+
+
+@pytest.mark.parametrize(
+    "failures", [("offload",), ("table0",), ("prefetch", "table0")]
+)
+def test_model_close_releases_all_resources_after_cleanup_error(
+    converted, monkeypatch, failures
+):
+    model, _ = load(converted, engram_ssd_offload=True)
+    prefetch = model.language_model._engram_prefetch
+    tables = [
+        layer.engram.embed for layer in model.language_model.layers if "engram" in layer
+    ]
+    original_prefetch_close = prefetch.close
+    original_table_closes = [table.close for table in tables]
+    errors = {name: OSError(f"{name} cleanup failed") for name in failures}
+    closed = []
+
+    def tracked_close(name, close):
+        def wrapped():
+            closed.append(name)
+            close()
+            if name in errors:
+                raise errors[name]
+
+        return wrapped
+
+    monkeypatch.setattr(
+        model,
+        "_moe_offload_plan",
+        SimpleNamespace(close=tracked_close("offload", lambda: None)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        prefetch, "close", tracked_close("prefetch", original_prefetch_close)
+    )
+    for i, (table, close) in enumerate(zip(tables, original_table_closes)):
+        monkeypatch.setattr(table, "close", tracked_close(f"table{i}", close))
+
+    try:
+        # Start the real worker and retain a completed pending read to drain.
+        prefetch.submit(tables[0], np.array([1]))
+        prefetch._pending[1].result(timeout=5)
+        with pytest.raises(OSError) as raised:
+            model.close()
+        assert raised.value is errors[failures[0]]
+        assert closed == ["offload", "prefetch", "table0", "table1"]
+        assert prefetch._closed and prefetch._pending is None
+        assert all(not thread.is_alive() for thread in prefetch._executor._threads)
+        for table in tables:
+            assert table._closed and table._prefetched is None
+            assert table._weights._mapping is None
+            assert table._weights._file.closed
+
+        # A repeated close still visits every resource, even after an error.
+        errors.clear()
+        closed.clear()
+        model.close()
+        assert closed == ["offload", "prefetch", "table0", "table1"]
+    finally:
+        original_prefetch_close()
+        for close in original_table_closes:
+            close()
 
 
 @pytest.mark.parametrize("offload", [False, True])
@@ -681,6 +791,91 @@ def test_decode_rows_prefetch_their_pages(tmp_path, monkeypatch):
         reader.close()
 
 
+def test_wide_mixed_reads_only_read_rows_on_new_pages(tmp_path, monkeypatch):
+    path = tmp_path / "mixed.safetensors"
+    row_bytes = 519
+    raw = np.random.default_rng(19).integers(0, 256, (4096, row_bytes), dtype=np.uint8)
+    raw_safetensors(path, {"w": (raw, "U8")})
+    reader = storage.TensorFile(path)
+    original = storage.os.pread
+    calls = []
+
+    def counted(fd, count, offset):
+        calls.append((offset, offset + count))
+        return original(fd, count, offset)
+
+    try:
+        reader.read("w", np.arange(24))
+        # This row starts on the warm first page and ends on a new page.
+        crossing = (storage.PAGE_SIZE - reader._start) // row_bytes
+        offset = reader._start + crossing * row_bytes
+        assert offset < storage.PAGE_SIZE < offset + row_bytes
+        monkeypatch.setattr(storage.os, "pread", counted)
+        rows = np.tile([0, crossing, 2, 15], 5000).reshape(4, -1)
+        actual, _ = reader.read("w", rows)
+        np.testing.assert_array_equal(actual, raw[rows])
+        assert calls == [(offset, offset + row_bytes)]
+        # Narrow mixed reads, such as decode, still read every row.
+        calls.clear()
+        narrow = np.array([2, 3000, 15])
+        actual, _ = reader.read("w", narrow)
+        np.testing.assert_array_equal(actual, raw[narrow])
+        for row in narrow:
+            begin = reader._start + int(row) * row_bytes
+            assert any(
+                low <= begin and begin + row_bytes <= high for low, high in calls
+            )
+    finally:
+        reader.close()
+
+
+def test_evicted_warm_pages_keep_only_that_tensor_on_reads(tmp_path, monkeypatch):
+    path = tmp_path / "evicted.safetensors"
+    weights = np.arange(8192 * 64, dtype=np.uint8).reshape(8192, 64)
+    scales = np.arange(8192, dtype=np.float16).reshape(8192, 1)
+    raw_safetensors(path, {"w": (weights, "U8"), "s": (scales, "F16")})
+    reader = storage.TensorFile(path)
+    rows = np.tile([0, 255, 256, 4095], 4096)
+    address = np.frombuffer(reader._mapping, dtype=np.uint8, count=1).ctypes.data
+    first_scale_page = (reader._start + weights.nbytes) // storage.PAGE_SIZE
+    scale_page = address + first_scale_page * storage.PAGE_SIZE
+    original = storage.os.pread
+    calls = []
+    clock = [100.0]
+    weights_cached = [False]
+
+    def counted(fd, count, offset):
+        calls.append(offset)
+        return original(fd, count, offset)
+
+    def mincore(page, length, state):
+        state._obj.value = int(weights_cached[0] or page >= scale_page)
+        return 0
+
+    monkeypatch.setattr(storage.os, "pread", counted)
+    monkeypatch.setattr(storage, "_MINCORE", mincore)
+    monkeypatch.setattr(storage.time, "monotonic", lambda: clock[0])
+    try:
+        for key, raw in (("w", weights), ("s", scales)):
+            np.testing.assert_array_equal(reader.read(key, rows)[0], raw[rows])
+        calls.clear()
+        np.testing.assert_array_equal(reader.read("w", rows)[0], weights[rows])
+        assert calls
+        calls.clear()
+        np.testing.assert_array_equal(reader.read("s", rows)[0], scales[rows])
+        assert not calls
+        # The weight fallback holds without a new probe until it expires.
+        weights_cached[0] = True
+        reader.read("w", rows)
+        assert calls
+        calls.clear()
+        clock[0] += storage.ROW_READ_RETRY_SECONDS
+        np.testing.assert_array_equal(reader.read("w", rows)[0], weights[rows])
+        assert not calls
+    finally:
+        reader.close()
+
+
 def test_page_read_failure_drains_workers_before_close(tmp_path, monkeypatch):
     reader, _ = page_table(tmp_path)
     original = storage.os.pread
@@ -688,7 +883,7 @@ def test_page_read_failure_drains_workers_before_close(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "PAGE_IO_WORKERS", 2)
 
     def blocked_read(fd, count, offset):
-        if offset == 0:
+        if offset == reader._start:
             raise OSError("page read failed")
         entered.set()
         assert release.wait(5)
@@ -706,7 +901,8 @@ def test_page_read_failure_drains_workers_before_close(tmp_path, monkeypatch):
             assert entered.wait(5)
             closed = executor.submit(close)
             assert closing.wait(5)
-            assert not closed.done()
+            with pytest.raises(TimeoutError):
+                closed.result(timeout=0.1)
         finally:
             release.set()
         with pytest.raises(OSError, match="page read failed"):

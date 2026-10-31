@@ -6,6 +6,8 @@ with directory-size-based progress polling.
 """
 
 import asyncio
+import contextlib
+import functools
 import logging
 import os
 import shutil
@@ -17,10 +19,13 @@ from typing import Callable, Optional
 import requests
 
 from .hf_downloader import (
+    _ETA_WARMUP,
+    _ETA_WINDOW,
     DownloadStatus,
     DownloadTask,
     _QueuePersistenceMixin,
     _SpeedMeter,
+    _WireSpeedMeter,
     _format_model_size,
     _format_param_count,
 )
@@ -373,6 +378,29 @@ async def _fetch_ms_models_rest(
     except Exception as e:
         logger.warning(f"ModelScope REST API fetch failed: {e}")
     return []
+
+
+class _DownloadAborted(BaseException):
+    """Stops a cancelled transfer. The SDK retries on any Exception."""
+
+
+class _AbortCallback:
+    """ModelScope progress callback that stops a cancelled transfer.
+
+    The SDK creates one per file and calls ``update()`` per chunk.
+    """
+
+    def __init__(self, should_abort: Callable[[], bool], filename: str, file_size: int):
+        self._should_abort = should_abort
+        if should_abort():
+            raise _DownloadAborted()
+
+    def update(self, size: int) -> None:
+        if self._should_abort():
+            raise _DownloadAborted()
+
+    def end(self) -> None:
+        pass
 
 
 class MSDownloader(_QueuePersistenceMixin):
@@ -749,9 +777,8 @@ class MSDownloader(_QueuePersistenceMixin):
     async def cancel_download(self, task_id: str) -> bool:
         """Cancel an active download.
 
-        Note: Due to Python threading limitations, the actual download thread
-        cannot be interrupted immediately. The download will be marked as
-        cancelled and files will be cleaned up when the thread completes.
+        The SDK thread stops at its next chunk. Partial files stay so a
+        retry can resume them.
 
         Args:
             task_id: The task ID to cancel.
@@ -777,8 +804,8 @@ class MSDownloader(_QueuePersistenceMixin):
         if progress_task and not progress_task.done():
             progress_task.cancel()
 
-        # Cancel the download task
-        active_task = self._active_tasks.pop(task_id, None)
+        # The task stays in _active_tasks until its worker stops writing.
+        active_task = self._active_tasks.get(task_id)
         if active_task and not active_task.done():
             active_task.cancel()
 
@@ -833,13 +860,12 @@ class MSDownloader(_QueuePersistenceMixin):
         model_id = old_task.repo_id
         old_retry_count = old_task.retry_count
 
-        # Remove old task entry
+        # Start fresh download (snapshot_download resumes from existing files).
+        # An empty retry token keeps the stored one. If it raises, the old
+        # row stays so the user can retry later.
+        new_task = await self.start_download(model_id, ms_token or old_task.token)
         del self._tasks[task_id]
         self._cancelled.discard(task_id)
-
-        # Start fresh download (snapshot_download resumes from existing files).
-        # An empty retry token keeps the stored one.
-        new_task = await self.start_download(model_id, ms_token or old_task.token)
         new_task.retry_count = old_retry_count + 1
         self._persist()
         return new_task
@@ -927,12 +953,29 @@ class MSDownloader(_QueuePersistenceMixin):
                 if ms_token:
                     dl_kwargs["token"] = ms_token
 
-                # Run snapshot_download in a thread (blocking call)
-                # Note: Thread cannot be interrupted, cancellation is checked after completion
-                await asyncio.to_thread(
-                    ms_snapshot_download,
-                    **dl_kwargs,
+                # Cancel, stall and shutdown all move the task out of DOWNLOADING.
+                abort = functools.partial(
+                    _AbortCallback,
+                    lambda: task.status != DownloadStatus.DOWNLOADING,
                 )
+                payload = asyncio.get_running_loop().run_in_executor(
+                    None,
+                    functools.partial(
+                        ms_snapshot_download,
+                        **dl_kwargs,
+                        progress_callbacks=[abort],
+                    ),
+                )
+                try:
+                    await asyncio.shield(payload)
+                except asyncio.CancelledError:
+                    # A retry must not overlap this writer. Hold the semaphore
+                    # until the SDK thread stops, even if cancelled again.
+                    while not payload.done():
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await asyncio.wait({payload})
+                    payload.exception()  # Retrieved, so asyncio does not log it.
+                    raise
 
                 # Check if cancelled while downloading - clean up downloaded files
                 if task_id in self._cancelled:
@@ -1035,6 +1078,10 @@ class MSDownloader(_QueuePersistenceMixin):
         speed_meter = _SpeedMeter()
         activity = self._get_download_activity(target_dir)
         speed_meter.add(activity.files)
+        # Rate of the reported bytes, fed from the first moving tick to skip
+        # startup idle time.
+        eta_meter = _WireSpeedMeter(window=_ETA_WINDOW)
+        eta_started_at: float | None = None
 
         try:
             while task.status == DownloadStatus.DOWNLOADING:
@@ -1048,6 +1095,12 @@ class MSDownloader(_QueuePersistenceMixin):
                 latest_mtime = activity.latest_mtime_ns / 1e9
                 task.downloaded_size = current_size
                 task.speed_bps = speed_meter.add(activity.files)
+                if eta_started_at is None and task.speed_bps > 0:
+                    eta_started_at = time.monotonic()
+                if eta_started_at is not None:
+                    eta_bps = eta_meter.add(task.downloaded_size)
+                    if time.monotonic() - eta_started_at >= _ETA_WARMUP:
+                        task.eta_speed_bps = eta_bps
 
                 if task.total_size > 0:
                     # Cap at 99% until snapshot_download confirms completion
@@ -1085,6 +1138,7 @@ class MSDownloader(_QueuePersistenceMixin):
             pass
         finally:
             task.speed_bps = 0.0
+            task.eta_speed_bps = 0.0
 
     @staticmethod
     def _get_dir_size(path: Path) -> int:

@@ -21,12 +21,11 @@ macOS 27 betas broke `brew install omlx` in several ways (issue #2110):
   wheel cache could resurrect a dylib built before the strip guards.
 
 The formula used to fetch its own mlx-audio revision to patch the
-`mlx-lm==0.31.1` pin that revision carried. mlx-audio 0.5.x dropped that pin
-and moved the audio stack (misaki, spaCy, librosa, numba, ...) out of its
-"all" extra into omlx's [audio] extra, so the formula now installs that extra
-and the resource only has to track pyproject.toml's mlx-audio pin; a resource
-left behind is what downgraded the keg below mlx-vlm's `mlx-audio>=0.5.2`
-floor (issue #3916).
+`mlx-lm==0.31.1` pin that revision carried. Upstream dropped that pin and
+leaves the audio stack (misaki, spaCy, librosa, numba, ...) out of its "all"
+extra, so the formula installs omlx's [audio] extra and the resource only has
+to track pyproject.toml's mlx-audio pin; a resource left behind is what
+downgraded the keg below mlx-vlm's `mlx-audio>=0.6.2` floor (issue #3916).
 
 The formula and workflow use Ruby and shell syntax, so these are text-level
 assertions that the guards stay present.
@@ -171,7 +170,7 @@ class TestMlxAudioResourcePin:
 
     The resource's revision decides what the keg ends up with, so leaving it
     behind pyproject's pin reinstalls an older mlx-audio than omlx resolved
-    (0.4.3 against mlx-vlm's `mlx-audio>=0.5.2` floor) and `pip check` fails.
+    (0.4.3 against mlx-vlm's `mlx-audio>=0.6.2` floor) and `pip check` fails.
     """
 
     def test_pyproject_mlx_audio_pins_agree(self, pyproject):
@@ -195,7 +194,7 @@ class TestMlxAudioResourcePin:
         assert '"mlx-lm==0.31.1"' not in formula
 
     def test_formula_installs_omlx_audio_extra(self, formula):
-        """mlx-audio 0.5.x leaves misaki/spaCy/librosa to the [audio] extra,
+        """mlx-audio leaves misaki/spaCy/librosa to omlx's [audio] extra,
         which the formula's spaCy model check and Kokoro TTS depend on."""
         install_spec = next(
             line
@@ -224,5 +223,10 @@ class TestCustomKernelBuild:
 
     def test_metal_toolchain_checked_before_kernel_build(self, formula):
         block = formula.index('if build.with?("custom-kernel")')
-        guard = formula.index('quiet_system("/usr/bin/xcrun", "-f", "metal")', block)
+        guard = formula.index('quiet_system("/usr/bin/xcrun", "metal", "--version")', block)
         assert guard < formula.index('ENV["OMLX_WITH_CUSTOM_KERNEL"]', block)
+
+    def test_metal_guard_executes_the_compiler(self, formula):
+        """`xcrun -f metal` succeeds whenever the shim exists, which it does even
+        when the Metal toolchain behind it cannot run, so it cannot be the guard."""
+        assert 'quiet_system("/usr/bin/xcrun", "-f", "metal")' not in formula

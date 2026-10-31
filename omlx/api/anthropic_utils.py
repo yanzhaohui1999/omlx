@@ -711,6 +711,19 @@ def _extract_system_text(system: str | list[SystemContent]) -> str:
     return ""
 
 
+_AUTO_MODE_CLASSIFIER_MARKER = (
+    "you are a security monitor for autonomous ai coding agents"
+)
+
+
+def is_auto_mode_classifier_request(request: MessagesRequest) -> bool:
+    """Match Claude Code's auto-mode safety classifier request."""
+    if request.stream or request.tools or not request.system:
+        return False
+    system_text = _extract_system_text(request.system).lower()
+    return _AUTO_MODE_CLASSIFIER_MARKER in system_text
+
+
 def _normalize_in_messages_system(
     request: MessagesRequest,
     *,
@@ -1076,6 +1089,10 @@ def map_finish_reason_to_stop_reason(
     Returns:
         Anthropic stop_reason
     """
+    # A length stop can cut a later call, so it wins over tool_use.
+    if finish_reason == "length":
+        return "max_tokens"
+
     if has_tool_calls:
         return "tool_use"
 

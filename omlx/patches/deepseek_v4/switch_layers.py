@@ -330,6 +330,9 @@ class QuantizedSwitchLinear(nn.Module):
                     block_variant,
                 )
         else:
+            extra = {}
+            if "global_scale" in self:
+                extra["global_scale"] = self["global_scale"]
             x = mx.gather_qmm(
                 x,
                 self["weight"],
@@ -341,10 +344,47 @@ class QuantizedSwitchLinear(nn.Module):
                 bits=self.bits,
                 mode=self.mode,
                 sorted_indices=sorted_indices,
+                **extra,
             )
         if "bias" in self:
             x = x + mx.expand_dims(self["bias"][indices], -2)
         return x
+
+
+# ModelOpt two-level NVFP4 stores ``weight_scale_2 = amax / (6 * 448)`` per
+# expert; ``mx.gather_qmm`` takes the amax itself as ``global_scale``.
+NVFP4_GLOBAL_SCALE = 6.0 * 448.0
+_WEIGHT_SCALE_2 = ".weight_scale_2"
+
+
+def install_nvfp4_global_scales(model: nn.Module, weights: dict) -> dict:
+    """Map routed-expert ``weight_scale_2`` tensors to ``global_scale``.
+
+    ModelOpt NVFP4 experts carry one f32 tensor scale per expert next to the
+    E2M1 codes and E4M3 block scales. The projection gets a ``global_scale``
+    parameter (kept by ``to_quantized``) and the value is stored as the amax
+    ``gather_qmm`` expects. The renamed key also keeps mlx-vlm's
+    ``replace_scaled_quantized_linears`` off these projections, which it can
+    only wrap for its own switch class.
+    """
+    if not isinstance(model, nn.Module):
+        # oQ runs sanitize on a stand-in object only to map the names.
+        return weights
+    modules = None
+    out = {}
+    for key, value in weights.items():
+        if key.endswith(_WEIGHT_SCALE_2) and ".switch_mlp." in f".{key}":
+            path = key[: -len(_WEIGHT_SCALE_2)]
+            if modules is None:
+                modules = dict(model.named_modules())
+            proj = modules.get(path)
+            if isinstance(proj, (SwitchLinear, QuantizedSwitchLinear)):
+                scale = value.astype(mx.float32).reshape(-1) * NVFP4_GLOBAL_SCALE
+                proj.global_scale = mx.ones_like(scale)
+                out[f"{path}.global_scale"] = scale
+                continue
+        out[key] = value
+    return out
 
 
 class SwitchLinear(nn.Module):
@@ -401,6 +441,8 @@ class SwitchLinear(nn.Module):
             self.weight, group_size, bits, mode=mode
         )
         ql.biases = biases[0] if biases else None
+        if "global_scale" in self:
+            ql.global_scale = self.global_scale
 
         if "bias" in self:
             ql.bias = self.bias
@@ -458,10 +500,18 @@ class SwitchGLU(nn.Module):
 
         block_plan = None
         native_kinds = None
-        use_f16_moe = original_dtype == mx.bfloat16 and all(
-            isinstance(p, QuantizedSwitchLinear)
-            and p._has_affine_metadata_dtype(mx.float16)
-            for p in projections
+        # A bfloat16 activation against float16 affine metadata promotes the
+        # matmul to float32, which the MXFP4 kernels reject. MXFP4 projections
+        # take float16 too, so a stack that mixes them with float16 affine
+        # projections (oQ3.5e keeps an MXFP4 source down_proj) runs in float16.
+        use_f16_moe = (
+            original_dtype == mx.bfloat16
+            and all(isinstance(p, QuantizedSwitchLinear) for p in projections)
+            and any(p._has_affine_metadata_dtype(mx.float16) for p in projections)
+            and all(
+                p._has_affine_metadata_dtype(mx.float16) or p.mode == "mxfp4"
+                for p in projections
+            )
         )
         if do_sort and all(isinstance(p, QuantizedSwitchLinear) for p in projections):
             native_kinds = tuple(p._native_block_kind(x, do_sort) for p in projections)
@@ -470,8 +520,10 @@ class SwitchGLU(nn.Module):
                     p._native_block_kind(x, do_sort, dtype=mx.float16)
                     for p in projections
                 )
-                if all(kind == "mxfp4" for kind in f16_native_kinds) or all(
-                    kind == "affine" for kind in f16_native_kinds
+                if (
+                    use_f16_moe
+                    or all(kind == "mxfp4" for kind in f16_native_kinds)
+                    or all(kind == "affine" for kind in f16_native_kinds)
                 ):
                     native_kinds = f16_native_kinds
                     use_f16_moe = True

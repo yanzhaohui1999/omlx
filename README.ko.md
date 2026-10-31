@@ -225,7 +225,7 @@ Claude Code에서 작은 컨텍스트 모델을 실행할 수 있도록 토큰 �
 
 ### 모델 다운로드
 
-관리자 대시보드에서 HuggingFace의 MLX 모델을 직접 검색하고 다운로드합니다. 모델 카드 확인, 파일 크기 확인, 원클릭 다운로드가 가능합니다.
+관리자 대시보드에서 HuggingFace 모델을 MLX, GGUF 또는 전체 형식으로 직접 검색하고 다운로드합니다. 모델 카드를 확인한 뒤 받을 파일을 고를 수 있으며, MLX 체크포인트는 필요한 파일을 항상 받고 GGUF는 vision projector를 함께 받습니다.
 
 <p align="center">
   <img src="docs/images/downloader_omlx.png" alt="oMLX 모델 다운로드" width="720">
@@ -450,3 +450,4 @@ apps/omlx-mac/Scripts/build.sh release --rebuild-donor
 - [MTPLX](https://github.com/youssofal/mtplx) - Lightning MTP의 verify-shape Metal 커널은 Youssof Altoukhi의 MTPLX를 기반으로 하며, depth-k 파이프라인도 여기서 영감을 받았습니다
 - [mlx-serve](https://github.com/ddalcu/mlx-serve) - fused GDN verify prework 커널은 mlx-serve가 포팅한 mlxfast-challenge의 qwen35_packed_gdn_prework 커널을 바탕으로 수정되었고, Qwen4의 fused GDN decode·prefill 커널은 mlx-serve의 MIT 라이선스 `transformer.zig`를 바탕으로 수정되었습니다
 - [SiliconScope](https://github.com/kennss/SiliconScope) - 메뉴 바 통계의 디자인과 렌더링 방식은 Kennt Kim의 SiliconScope에서 가져왔으며, 에너지 효율적인 리렌더 게이팅도 여기서 영감을 받았습니다
+- [m5gpu](https://github.com/beamivalice/m5gpu) - GPU 전력 제한은 beamivalice의 m5gpu가 정리한 AGX GPU 전력 목표값(`SetMaxGPUAbsolutePower`와 `AbsoluteTarget`, 해제값 `-1000`)을 사용합니다
