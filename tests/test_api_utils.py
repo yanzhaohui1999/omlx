@@ -3037,6 +3037,46 @@ class TestPrepareSystemMessagesForTemplate:
         assert [message["role"] for message in result] == ["system", "user"]
         assert result[0]["content"] == "You are an agent."
 
+    @pytest.mark.parametrize(
+        ("calls", "sent", "expected"),
+        [
+            (["call_a", "call_b"], ["call_b", "call_a"], ["call_a", "call_b"]),
+            (["call_a", "call_b"], ["call_a", "call_b"], ["call_a", "call_b"]),
+            (
+                ["call_a", "call_b"],
+                ["call_unmatched", "call_b", "call_a"],
+                ["call_unmatched", "call_a", "call_b"],
+            ),
+            ([], ["call_a", "call_b"], ["call_a", "call_b"]),
+        ],
+    )
+    def test_orders_parallel_tool_results_by_call_order(self, calls, sent, expected):
+        messages = [{"role": "user", "content": "Read both files."}]
+        if calls:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": call_id, "function": {"name": "Read", "arguments": {}}}
+                        for call_id in calls
+                    ],
+                }
+            )
+        messages.extend(
+            {"role": "tool", "tool_call_id": call_id, "content": f"result {call_id}"}
+            for call_id in sent
+        )
+
+        result = prepare_system_messages_for_template(
+            messages, self.PreserveTokenizer()
+        )
+
+        assert [m["tool_call_id"] for m in result if m["role"] == "tool"] == expected
+        assert [m["content"] for m in result if m["role"] == "tool"] == [
+            f"result {call_id}" for call_id in expected
+        ]
+
 
 class TestMergeConsecutiveRoles:
     """Tests for consecutive same-role message merging."""
