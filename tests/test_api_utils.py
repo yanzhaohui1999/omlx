@@ -897,112 +897,6 @@ class TestConvertAnthropicToInternal:
         assert result[1]["tool_call_id"] == "toolu_123"
         assert result[1]["content"] == "The weather is sunny"
 
-    @pytest.mark.parametrize(
-        ("incoming", "expected"),
-        [
-            (
-                [("toolu_b", "B"), ("toolu_a", "A")],
-                [("toolu_a", "A"), ("toolu_b", "B")],
-            ),
-            (
-                [("toolu_c", "C"), ("toolu_x", "X"), ("toolu_a", "A")],
-                [("toolu_a", "A"), ("toolu_c", "C"), ("toolu_x", "X")],
-            ),
-            (
-                [("", "first"), ("toolu_a", "A"), ("", "second")],
-                [("toolu_a", "A"), ("", "first"), ("", "second")],
-            ),
-        ],
-    )
-    def test_native_tool_results_follow_tool_call_order(self, incoming, expected):
-        """Parallel tool results reach the template in tool_calls order."""
-
-        class NativeToolTokenizer:
-            has_tool_calling = True
-
-        request = MessagesRequest(
-            model="claude-3",
-            max_tokens=1024,
-            messages=[
-                AnthropicMessage(
-                    role="assistant",
-                    content=[
-                        ContentBlockToolUse(id=tid, name="read_file", input={})
-                        for tid in ("toolu_a", "toolu_b", "toolu_c")
-                    ],
-                ),
-                AnthropicMessage(
-                    role="user",
-                    content=[
-                        ContentBlockToolResult(tool_use_id=tid, content=text)
-                        for tid, text in incoming
-                    ],
-                ),
-            ],
-        )
-
-        result = convert_anthropic_to_internal(
-            request,
-            tokenizer=NativeToolTokenizer(),
-        )
-
-        assert [(msg["tool_call_id"], msg["content"]) for msg in result[1:]] == expected
-
-    def test_native_tool_results_follow_nearest_tool_calls(self):
-        """A later assistant turn orders its own results, not the previous turn."""
-
-        class NativeToolTokenizer:
-            has_tool_calling = True
-
-        request = MessagesRequest(
-            model="claude-3",
-            max_tokens=1024,
-            messages=[
-                AnthropicMessage(
-                    role="assistant",
-                    content=[
-                        ContentBlockToolUse(id="toolu_a", name="read", input={}),
-                        ContentBlockToolUse(id="toolu_b", name="read", input={}),
-                    ],
-                ),
-                AnthropicMessage(
-                    role="user",
-                    content=[
-                        ContentBlockToolResult(tool_use_id="toolu_b", content="B"),
-                        ContentBlockToolResult(tool_use_id="toolu_a", content="A"),
-                    ],
-                ),
-                AnthropicMessage(
-                    role="assistant",
-                    content=[
-                        ContentBlockToolUse(id="toolu_c", name="read", input={}),
-                        ContentBlockToolUse(id="toolu_d", name="read", input={}),
-                    ],
-                ),
-                AnthropicMessage(
-                    role="user",
-                    content=[
-                        ContentBlockToolResult(tool_use_id="toolu_d", content="D"),
-                        ContentBlockToolResult(tool_use_id="toolu_c", content="C"),
-                    ],
-                ),
-            ],
-        )
-
-        result = convert_anthropic_to_internal(
-            request,
-            tokenizer=NativeToolTokenizer(),
-        )
-
-        assert [(msg.get("tool_call_id"), msg["content"]) for msg in result] == [
-            (None, ""),
-            ("toolu_a", "A"),
-            ("toolu_b", "B"),
-            (None, ""),
-            ("toolu_c", "C"),
-            ("toolu_d", "D"),
-        ]
-
     def test_tool_result_with_image_preserve_images_nonnative(self):
         """Images in tool_result content are preserved when preserve_images=True (non-native path)."""
         request = MessagesRequest(
@@ -3142,6 +3036,46 @@ class TestPrepareSystemMessagesForTemplate:
 
         assert [message["role"] for message in result] == ["system", "user"]
         assert result[0]["content"] == "You are an agent."
+
+    @pytest.mark.parametrize(
+        ("calls", "sent", "expected"),
+        [
+            (["call_a", "call_b"], ["call_b", "call_a"], ["call_a", "call_b"]),
+            (["call_a", "call_b"], ["call_a", "call_b"], ["call_a", "call_b"]),
+            (
+                ["call_a", "call_b"],
+                ["call_unmatched", "call_b", "call_a"],
+                ["call_unmatched", "call_a", "call_b"],
+            ),
+            ([], ["call_a", "call_b"], ["call_a", "call_b"]),
+        ],
+    )
+    def test_orders_parallel_tool_results_by_call_order(self, calls, sent, expected):
+        messages = [{"role": "user", "content": "Read both files."}]
+        if calls:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": call_id, "function": {"name": "Read", "arguments": {}}}
+                        for call_id in calls
+                    ],
+                }
+            )
+        messages.extend(
+            {"role": "tool", "tool_call_id": call_id, "content": f"result {call_id}"}
+            for call_id in sent
+        )
+
+        result = prepare_system_messages_for_template(
+            messages, self.PreserveTokenizer()
+        )
+
+        assert [m["tool_call_id"] for m in result if m["role"] == "tool"] == expected
+        assert [m["content"] for m in result if m["role"] == "tool"] == [
+            f"result {call_id}" for call_id in expected
+        ]
 
 
 class TestMergeConsecutiveRoles:

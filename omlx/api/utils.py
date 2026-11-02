@@ -795,6 +795,50 @@ def _downgrade_mid_system_to_user_notes(messages: list[dict]) -> list[dict] | No
     return rewritten
 
 
+def _sort_tool_results_by_call_order(messages: list[dict]) -> list[dict]:
+    """Order each run of tool results by the preceding assistant's tool_calls.
+
+    Clients return parallel results in completion order. Templates that render
+    ``tool_call_id`` pair by id, but ones that render only the result body
+    (Qwen3.5/3.8 ``<tool_response>``) pair by position, so the run is put back
+    into call order. A result whose id is not among the preceding calls keeps
+    its position instead of being guessed at.
+    """
+    ordered: list[dict] = []
+    call_order: dict[str, int] = {}
+    index = 0
+    while index < len(messages):
+        msg = messages[index]
+        if msg.get("role") == "tool":
+            end = index
+            while end < len(messages) and messages[end].get("role") == "tool":
+                end += 1
+            run = messages[index:end]
+            slots = [
+                slot
+                for slot, result in enumerate(run)
+                if result.get("tool_call_id") in call_order
+            ]
+            ranked = sorted(
+                (run[slot] for slot in slots),
+                key=lambda result: call_order[result["tool_call_id"]],
+            )
+            for slot, result in zip(slots, ranked):
+                run[slot] = result
+            ordered.extend(run)
+            index = end
+            continue
+        if msg.get("role") == "assistant":
+            call_order = {
+                call["id"]: order
+                for order, call in enumerate(msg.get("tool_calls") or [])
+                if call.get("id")
+            }
+        ordered.append(msg)
+        index += 1
+    return ordered
+
+
 def prepare_system_messages_for_template(
     messages: list[dict],
     tokenizer: Any | None,
@@ -808,9 +852,11 @@ def prepare_system_messages_for_template(
 
     Model-specific templates may first relocate supported system turns to a
     native reminder role. Unsupported placements or templates then use the
-    configured strict or user-note fallback.
+    configured strict or user-note fallback. Tool results are put into the
+    preceding call order so templates that do not render ids still pair them.
     """
     messages = _drop_client_budget_markers([dict(msg) for msg in messages])
+    messages = _sort_tool_results_by_call_order(messages)
     if unsupported_mid_system_policy not in {"strict", "user_note_safe"}:
         unsupported_mid_system_policy = "strict"
 
