@@ -36,6 +36,51 @@ apply_m5_gather_qmm_workaround()
 
 from omlx.custom_kernels.nax import is_nax_available
 from omlx.request import Request, SamplingParams
+from tests.conftest_patch_isolation import (  # noqa: E402
+    capture_pristine,
+    families_from,
+    families_of,
+    isolated,
+)
+
+
+def pytest_collection_finish(session):
+    """Freeze un-patched state before any test can install a process patch."""
+    capture_pristine(families_from(session.items))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Opt-in audit: ``OMLX_PATCH_LEAK_AUDIT=1`` lists un-restored state."""
+    if not os.environ.get("OMLX_PATCH_LEAK_AUDIT"):
+        return
+    for family in families_from(session.items):
+        leaks = family.leaks()
+        if leaks:
+            print(f"PATCH-LEAK: {leaks}")
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_process_patches(request):
+    """Restore declared patch modules to their pre-test state around a module.
+
+    Test modules that call ``apply_*()`` / ``set_*()`` opt in with::
+
+        PATCH_ISOLATION = (patch_family(modules=(...), sys_modules=(...)),)
+
+    and may install a ``PATCH_ISOLATION_SETUP`` callable that runs inside the
+    isolated window (used by files that must patch before importing a vendored
+    model module).  See ``tests/conftest_patch_isolation.py``.
+    """
+    families = families_of(request.module)
+    if not families:
+        yield
+        return
+
+    setup = getattr(request.module, "PATCH_ISOLATION_SETUP", None)
+    with isolated(*families):
+        if setup is not None:
+            setup()
+        yield
 
 
 @pytest.fixture
