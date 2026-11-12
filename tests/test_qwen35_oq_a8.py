@@ -21,6 +21,10 @@ import pytest
 
 mx = pytest.importorskip("mlx.core")
 
+from tests.patch_families import QWEN35_OQ_A8  # noqa: E402
+
+PATCH_ISOLATION = (QWEN35_OQ_A8,)
+
 GROUP_SIZE = 64
 
 

@@ -7,6 +7,10 @@ import sys
 import mlx.core as mx
 import pytest
 
+from tests.patch_families import STEP3P7
+
+PATCH_ISOLATION = (STEP3P7,)
+
 
 def _text_config(**overrides):
     cfg = dict(

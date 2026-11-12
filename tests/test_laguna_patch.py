@@ -13,6 +13,10 @@ import sys
 import mlx.core as mx
 import pytest
 
+from tests.patch_families import LAGUNA
+
+PATCH_ISOLATION = (LAGUNA,)
+
 
 def _minimal_laguna_config(**overrides):
     """Flat minimal Laguna text-model config for ModelArgs construction.

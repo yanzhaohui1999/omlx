@@ -9,6 +9,10 @@ from types import SimpleNamespace
 import mlx.core as mx
 import pytest
 
+from tests.patch_families import BAILING
+
+PATCH_ISOLATION = (BAILING,)
+
 
 def _minimal_config(**overrides):
     config = {

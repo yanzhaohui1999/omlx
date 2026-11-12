@@ -11,6 +11,9 @@ import pytest
 import omlx.patches.qwen35_ane_prefill as ane_patch
 from omlx.custom_kernels.qwen35_prefill import fast
 from omlx.patches import qwen35_packed_linear
+from tests.patch_families import ANE_PREFILL
+
+PATCH_ISOLATION = (ANE_PREFILL,)
 
 
 def test_ane_compile_bindings_release_the_python_gil():

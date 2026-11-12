@@ -8,6 +8,7 @@ next conv-state slice) at every verify width it claims (S in 3..9).
 
 from __future__ import annotations
 
+import importlib
 from types import ModuleType, SimpleNamespace
 
 import mlx.core as mx
@@ -19,8 +20,20 @@ from mlx_vlm.models.qwen3_5.speculative_verifier import Qwen3_5BatchInvariantFor
 from mlx_vlm.speculative.cache_state import start_speculative_cache
 from mlx_vlm.speculative.ops import linear as linear_ops
 
-
 from omlx.patches import qwen35_gdn_prework as prework_mod
+from tests.qwen4_vendored import QWEN4_COMPAT, apply_compat
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+
+
+def _qwen4_language():
+    """Import the vendored Qwen4 module, installing the compat overlay first.
+
+    Other test modules used to install the overlay at collection time; apply it
+    here so these tests do not depend on which file ran before them.
+    """
+    apply_compat()
+    return importlib.import_module("mlx_vlm.models.qwen4_exp.language")
 
 
 @pytest.fixture(autouse=True)
@@ -139,7 +152,7 @@ def test_fused_prework_l2_bit_exact(seq, batch):
 
 
 def test_verify_gate_routes_qwen4_l2_norm(monkeypatch):
-    q4 = pytest.importorskip("mlx_vlm.models.qwen4_exp.language")
+    q4 = _qwen4_language()
     from mlx_vlm.models.cache import ArraysCache
     from mlx_vlm.models.qwen3_5 import language as q35
     from mlx_vlm.speculative.cache_state import start_speculative_cache
@@ -233,7 +246,7 @@ def test_verify_gate_resolves_compat_vendor_verifier(
 
     from mlx_vlm.models.cache import ArraysCache
 
-    pytest.importorskip("mlx_vlm.models.qwen4_exp.language")
+    _qwen4_language()
     if not vendor_registered_first:
         monkeypatch.setattr(prework_mod, "_PATCHED", False)
         assert prework_mod.apply_qwen35_gdn_prework_patch()

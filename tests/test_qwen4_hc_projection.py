@@ -10,6 +10,9 @@ import mlx.nn as nn
 import pytest
 
 from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
 
 
 def _production_module(bits: int, group_size: int = 64):

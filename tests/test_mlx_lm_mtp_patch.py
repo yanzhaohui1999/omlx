@@ -15,13 +15,13 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 from mlx.utils import tree_flatten
-from omlx.cache.type_registry import CacheTypeRegistry
-from mlx_lm.generate_utils import BatchCounters
 from mlx_lm.generate import BatchGenerator
+from mlx_lm.generate_utils import BatchCounters
 from mlx_lm.models.cache import KVCache
 
+from omlx.cache.type_registry import CacheTypeRegistry
 from omlx.model_settings import ModelSettings
-from omlx.patches import mlx_lm_mtp
+from omlx.patches import mlx_lm_mtp, qwen35_verify_qmm
 from omlx.patches.mlx_lm_mtp import batch_generator as bg
 from omlx.patches.mlx_lm_mtp import batched_head, cache_rollback
 from omlx.patches.mlx_lm_mtp.batch_policy import BatchPolicy
@@ -31,6 +31,10 @@ from omlx.utils.model_loading import (
     _is_mtp_compatible,
     maybe_apply_pre_load_patches,
 )
+from tests.patch_families import MTP
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (MTP, QWEN4_COMPAT)
 
 # ---------------------------------------------------------------------------
 # Patch orchestrator + sub-modules
@@ -518,6 +522,7 @@ class TestQwen35MoeSanitize:
     @pytest.fixture()
     def moe_model(self):
         from types import SimpleNamespace
+
         from mlx_lm.models import qwen3_5_moe as moe
 
         args = SimpleNamespace(
@@ -814,10 +819,10 @@ class TestBatchGeneratorDispatch:
 
     def test_decode_eligibility_reads_model_instance_flag_not_global(self):
         from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
             is_mtp_active,
             set_mtp_active,
         )
-        from omlx.patches.mlx_lm_mtp import batch_generator
 
         model = SimpleNamespace(
             mtp=object(),
@@ -870,10 +875,10 @@ class TestBatchGeneratorDispatch:
 
     def test_is_mtp_eligible_requires_mtp_forward_and_solo_batch(self):
         from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
             is_mtp_active,
             set_mtp_active,
         )
-        from omlx.patches.mlx_lm_mtp import batch_generator
 
         _is_mtp_eligible = batch_generator._is_mtp_eligible
 
@@ -937,10 +942,10 @@ class TestBatchGeneratorDispatch:
 
     def test_singleton_activation_waits_for_batch_generator_safe_point(self):
         from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
             is_mtp_active,
             set_mtp_active,
         )
-        from omlx.patches.mlx_lm_mtp import batch_generator
 
         class _MtpModel:
             def __init__(self):
@@ -967,8 +972,11 @@ class TestBatchGeneratorDispatch:
             set_mtp_active(prior_active)
 
     def test_singleton_activation_blocked_after_standard_multirow_decode(self):
-        from omlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from omlx.patches.mlx_lm_mtp import batch_generator
+        from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _MtpModel:
             def __init__(self):
@@ -1538,8 +1546,11 @@ class TestBatchGeneratorDispatch:
         assert batch._omlx_mtp_park_state.tokens_remaining == 256
 
     def test_batch_eligibility_requires_safe_activation(self, monkeypatch):
-        from omlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from omlx.patches.mlx_lm_mtp import batch_generator
+        from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _MtpModel:
             _omlx_mtp_multi_request = True
@@ -1578,8 +1589,11 @@ class TestBatchGeneratorDispatch:
         # cache offsets rarely align. Activation must not require alignment:
         # each row is seeded from its own extract_cache view and steady-state
         # row cycles diverge the offsets anyway (#2150).
-        from omlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from omlx.patches.mlx_lm_mtp import batch_generator
+        from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _Offset:
             def __init__(self, values):
@@ -1617,8 +1631,11 @@ class TestBatchGeneratorDispatch:
         # only. A batch's first decode step is always standard (MTP has not
         # activated yet), so blocking batch activation on the marker would
         # permanently lock every batch out of row-wise MTP (#2150).
-        from omlx.patches.mlx_lm_mtp import is_mtp_active, set_mtp_active
-        from omlx.patches.mlx_lm_mtp import batch_generator
+        from omlx.patches.mlx_lm_mtp import (
+            batch_generator,
+            is_mtp_active,
+            set_mtp_active,
+        )
 
         class _MtpModel:
             _omlx_mtp_multi_request = True
@@ -1736,8 +1753,8 @@ class TestBatchGeneratorDispatch:
 
     def test_mtp_state_valid_requires_single_matching_uid(self):
         from omlx.patches.mlx_lm_mtp.batch_generator import (
-            _MtpState,
             _mtp_state_valid_for_batch,
+            _MtpState,
         )
 
         state = _MtpState(uid=7)
@@ -1750,8 +1767,8 @@ class TestBatchGeneratorDispatch:
 
     def test_drop_invalid_mtp_state_after_batch_reshape(self):
         from omlx.patches.mlx_lm_mtp.batch_generator import (
-            _MtpState,
             _drop_invalid_mtp_state,
+            _MtpState,
         )
 
         batch = SimpleNamespace(uids=[1, 2], _omlx_mtp_state=_MtpState(uid=1))
@@ -1763,8 +1780,8 @@ class TestBatchGeneratorDispatch:
 
     def test_drop_invalid_mtp_state_keeps_matching_singleton(self):
         from omlx.patches.mlx_lm_mtp.batch_generator import (
-            _MtpState,
             _drop_invalid_mtp_state,
+            _MtpState,
         )
 
         state = _MtpState(uid=1)
@@ -2612,8 +2629,8 @@ class TestRotatingCacheMtpUndo:
 
     def test_unarmed_update_keeps_stock_semantics(self):
         import mlx.core as mx
-
         from mlx_lm.models.cache import RotatingKVCache
+
         from omlx.patches.mlx_lm_mtp import cache_rollback
 
         cache_rollback.apply()
@@ -2626,8 +2643,8 @@ class TestRotatingCacheMtpUndo:
 
     def test_grow_mode_trim_unchanged(self):
         import mlx.core as mx
-
         from mlx_lm.models.cache import RotatingKVCache
+
         from omlx.patches.mlx_lm_mtp import cache_rollback
 
         cache_rollback.apply()
@@ -4143,7 +4160,6 @@ def _model(family):
 
         qwen35_model.apply()
         from mlx_lm.models.qwen3_5 import TextModel, TextModelArgs
-
         from test_mtp_prompt_priming import TINY_CONFIG
 
         return TextModel(
