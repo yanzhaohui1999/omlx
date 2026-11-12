@@ -20,9 +20,6 @@ from omlx.patches.mlx_vlm_glm5_next_compat import (
     apply_mlx_vlm_glm5_next_compat_patch,
 )
 
-if not apply_mlx_vlm_glm5_next_compat_patch():
-    pytest.importorskip("mlx_vlm.models.glm5_next")
-
 import copy
 import os
 import subprocess
@@ -32,7 +29,6 @@ from types import MethodType, SimpleNamespace
 
 from mlx.utils import tree_flatten
 from mlx_vlm.models.cache import ArraysCache
-from mlx_vlm.models.glm5_next import language
 from mlx_vlm.speculative.drafters.dflash2.config import DFlash2Config
 from mlx_vlm.speculative.drafters.dflash2.dflash2 import DFlash2DraftModel
 
@@ -44,6 +40,24 @@ from omlx.patches.mlx_vlm_glm5_next_compat import decode_kernels as dk
 from omlx.patches.mlx_vlm_mtp import glm5_next_vlm_runtime  # noqa: E402
 from omlx.patches.mlx_vlm_mtp.glm5_next_batch_rollback import rollback_rows
 from omlx.speculative import dflash as dd
+
+from tests.patch_families import GLM5_NEXT
+
+PATCH_ISOLATION = (GLM5_NEXT,)
+
+
+def _apply_glm5_next():
+    """Install the vendor overlay inside the module's isolation window."""
+    if not apply_mlx_vlm_glm5_next_compat_patch():
+        pytest.skip("mlx-vlm glm5_next vendor overlay unavailable")
+    import importlib
+
+    globals()["language"] = importlib.import_module(
+        "mlx_vlm.models.glm5_next.language"
+    )
+
+
+PATCH_ISOLATION_SETUP = _apply_glm5_next
 
 N_MAIN = 45
 N_MTP = 1
@@ -110,8 +124,7 @@ PFX = f"model.language_model.layers.{N_MAIN}."
 @pytest.fixture(scope="module")
 def applied():
     assert glm5_next_vlm_runtime.apply()
-    from mlx_vlm.models.glm5_next import language
-
+    
     return language
 
 
@@ -846,8 +859,7 @@ def test_split_k_batched_decode_matches_rows_alone(monkeypatch, lengths):
 @pytest.mark.parametrize("dtype", [mx.float32, mx.bfloat16])
 def test_masked_replay_restores_metadata(size, dtype):
     from mlx_vlm.models.cache import ArraysCache
-    from mlx_vlm.models.glm5_next import language
-
+    
     mx.random.seed(884)
     host = make_host(dtype)
     width, heads, dim, kernel = 4, 2, 32, 4
@@ -1129,8 +1141,7 @@ def _runtime():
     from omlx.patches.mlx_vlm_mtp import glm5_next_vlm_runtime as rt
 
     assert rt.apply()
-    from mlx_vlm.models.glm5_next import language
-
+    
     return rt, language
 
 
