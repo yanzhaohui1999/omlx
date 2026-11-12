@@ -14,6 +14,10 @@ nn = pytest.importorskip("mlx.nn")
 BLOCK = 4
 TOPK = 3
 
+from tests.patch_families import M3_SPARSE
+
+PATCH_ISOLATION = (M3_SPARSE,)
+
 
 @pytest.fixture(scope="module")
 def language():

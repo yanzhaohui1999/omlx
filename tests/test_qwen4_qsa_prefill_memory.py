@@ -9,6 +9,11 @@ import pytest
 from mlx_lm.models.cache import KVCache
 from mlx_vlm.turboquant import TurboQuantKVCache
 
+from tests.patch_families import SDPA256, TURBOQUANT
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (SDPA256, TURBOQUANT, QWEN4_COMPAT)
+
 
 class QSAKVCache:
     def __init__(self, token_count: int):

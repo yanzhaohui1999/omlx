@@ -10,6 +10,10 @@ from fastapi import HTTPException
 
 from omlx.patches.moe_offload_compat import moe_offload_compatibility
 
+from tests.patch_families import GLM_MOE_DSA
+
+PATCH_ISOLATION = (GLM_MOE_DSA,)
+
 
 def _checkpoint(path, kind="qwen4_exp", per_expert=False):
     text = dict(

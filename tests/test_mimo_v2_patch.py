@@ -21,6 +21,10 @@ from omlx.patches.mimo_v2 import sdpa_flash as sf
 from omlx.patches.specprefill import _OffsetAdjustedRoPE, _PositionMappedRoPE
 from omlx.utils import fast_attention, nax_attention
 
+from tests.patch_families import MIMO_V2, MTP
+
+PATCH_ISOLATION = (MIMO_V2, MTP)
+
 
 def _minimal_config(**overrides):
     config = {

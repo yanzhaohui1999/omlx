@@ -18,6 +18,10 @@ from omlx.oq import (
 from omlx.patches.k2_horizon import apply_k2_horizon_patch
 from omlx.patches.k2_horizon.k2_horizon_model import Model, ModelArgs
 
+from tests.patch_families import K2_HORIZON
+
+PATCH_ISOLATION = (K2_HORIZON,)
+
 
 @pytest.mark.parametrize("level", sorted(OQ_LEVELS))
 @pytest.mark.parametrize("budgeted", [False, True])

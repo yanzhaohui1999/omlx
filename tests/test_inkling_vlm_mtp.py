@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests.patch_families import INKLING, MTP
+
+PATCH_ISOLATION = (INKLING, MTP)
+
 try:
     import mlx.core as mx
 

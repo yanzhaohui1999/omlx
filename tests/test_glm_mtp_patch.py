@@ -11,6 +11,10 @@ from test_glm_moe_dsa_patch import _glm_generate_patch_installed
 from omlx.patches.glm_moe_dsa import apply_glm_moe_dsa_patch
 from omlx.patches.mlx_lm_mtp import apply_mlx_lm_mtp_patch, set_mtp_active
 
+from tests.patch_families import GLM_MOE_DSA, MTP
+
+PATCH_ISOLATION = (GLM_MOE_DSA, MTP)
+
 
 @pytest.fixture(scope="module")
 def glm():
