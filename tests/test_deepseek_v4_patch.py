@@ -13,6 +13,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 
 @pytest.fixture(scope="module")
 def applied_patch():

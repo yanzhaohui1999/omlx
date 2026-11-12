@@ -72,6 +72,10 @@ else:
 
 from omlx.cache.type_registry import CacheTypeRegistry
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 
 class MockModel:
     """Mock model for testing."""

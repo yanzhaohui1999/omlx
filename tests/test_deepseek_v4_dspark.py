@@ -10,6 +10,10 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
+from tests.patch_families import DEEPSEEK_V4, MTP
+
+PATCH_ISOLATION = (DEEPSEEK_V4, MTP)
+
 
 @pytest.fixture(scope="module")
 def dsv4():

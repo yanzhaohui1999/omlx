@@ -17,6 +17,10 @@ from omlx.cache.pooling_delta import (
 )
 from omlx.cache.prefix_cache import BlockAwarePrefixCache
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 try:
     import mlx.core as mx
 

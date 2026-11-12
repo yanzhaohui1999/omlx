@@ -27,6 +27,10 @@ from omlx.memory_monitor import (
 )
 from omlx.scheduler import Scheduler, SchedulerConfig
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 
 def _make_scheduler() -> Scheduler:
     """Return a Scheduler with a mocked model/tokenizer.
