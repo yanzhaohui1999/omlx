@@ -13,6 +13,15 @@ from omlx.cluster.identity import (
     reset_configured_identity,
 )
 
+import omlx.cluster.identity as identity_module
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_identity_module_state():
+    with isolate_globals(identity_module, '_configured_identity'):
+        yield
+
 
 def test_creates_and_persists_identity_with_private_permissions(tmp_path):
     path = tmp_path / "cluster" / "identity.json"

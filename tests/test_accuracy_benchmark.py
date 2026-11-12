@@ -26,6 +26,13 @@ from omlx.admin.accuracy_benchmark import (
     start_next_from_queue,
 )
 from omlx.model_settings import ModelSettings
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_accuracy_benchmark_state():
+    with isolate_globals(accuracy_benchmark, '_accuracy_runs', '_accumulated_results', '_queue', '_queue_running', '_current_run_id', '_current_model'):
+        yield
 
 
 class TestAccuracyBenchmarkRequest:

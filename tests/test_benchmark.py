@@ -37,6 +37,15 @@ from omlx.admin.benchmark import (
     run_benchmark,
 )
 
+import omlx.admin.benchmark as benchmark_module
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_benchmark_module_state():
+    with isolate_globals(benchmark_module, '_benchmark_runs'):
+        yield
+
 # =============================================================================
 # BenchmarkRequest validation tests
 # =============================================================================

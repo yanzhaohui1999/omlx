@@ -10,6 +10,13 @@ import pytest
 
 from omlx.admin import ane_tuning
 from omlx.model_settings import ModelSettings
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_ane_tuning_state():
+    with isolate_globals(ane_tuning, '_runs'):
+        yield
 
 
 @pytest.fixture

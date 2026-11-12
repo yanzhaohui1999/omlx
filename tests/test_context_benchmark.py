@@ -22,6 +22,15 @@ from omlx.admin.context_benchmark import (
 )
 from omlx.exceptions import PrefillMemoryAbortedError, PrefillMemoryExceededError
 
+import omlx.admin.context_benchmark as context_benchmark_module
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_context_benchmark_module_state():
+    with isolate_globals(context_benchmark_module, '_context_runs'):
+        yield
+
 # =============================================================================
 # Request validation
 # =============================================================================
