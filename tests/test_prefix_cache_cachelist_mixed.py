@@ -40,6 +40,10 @@ from omlx.cache.prefix_cache import BlockAwarePrefixCache
 from omlx.cache.type_registry import CacheTypeRegistry
 from omlx.patches.arrays_cache_metadata import apply_arrays_cache_metadata_patch
 
+from tests.patch_families import DEEPSEEK_V4, ARRAYS
+
+PATCH_ISOLATION = (DEEPSEEK_V4, ARRAYS)
+
 try:
     import mlx.core as mx
     from mlx_lm.models.cache import ArraysCache, CacheList, KVCache

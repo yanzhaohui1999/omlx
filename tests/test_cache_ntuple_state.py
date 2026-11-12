@@ -20,6 +20,10 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 
 def _wait_for_file(path: Path, timeout: float = 5.0) -> bool:
     deadline = time.monotonic() + timeout

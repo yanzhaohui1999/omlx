@@ -5,6 +5,11 @@ import pytest
 
 from unittest.mock import MagicMock
 
+from tests.patch_families import DEEPSEEK_V4
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (DEEPSEEK_V4, QWEN4_COMPAT)
+
 
 # Create mock mlx modules
 class MockMXArray:

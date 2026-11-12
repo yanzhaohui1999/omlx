@@ -55,6 +55,10 @@ from omlx.scheduler import (
 )
 from omlx.utils import metal_sync
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 
 def test_boundary_snapshot_provider_removes_failed_promotion(tmp_path):
     staged = tmp_path / "detached.safetensors"

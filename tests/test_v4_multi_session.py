@@ -25,6 +25,10 @@ import time
 
 import pytest
 
+from tests.patch_families import DEEPSEEK_V4
+
+PATCH_ISOLATION = (DEEPSEEK_V4,)
+
 pytestmark = pytest.mark.slow
 
 
