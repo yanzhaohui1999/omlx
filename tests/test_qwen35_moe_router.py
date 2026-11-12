@@ -16,6 +16,10 @@ import pytest
 
 from omlx.patches.qwen35_moe_router import fused_router_topk, router_eligible
 
+from tests.patch_families import MOE_ROUTER
+
+PATCH_ISOLATION = (MOE_ROUTER,)
+
 K = 8
 NE = 256
 

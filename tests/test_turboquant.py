@@ -19,6 +19,10 @@ from omlx.turboquant_kv import (
     _rebuild_codecs,
 )
 
+from tests.patch_families import TURBOQUANT
+
+PATCH_ISOLATION = (TURBOQUANT,)
+
 pytestmark = pytest.mark.turboquant
 
 

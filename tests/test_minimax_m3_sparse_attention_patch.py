@@ -3,6 +3,10 @@
 
 import mlx.core as mx
 
+from tests.patch_families import M3_SPARSE
+
+PATCH_ISOLATION = (M3_SPARSE,)
+
 
 def test_storage_q_positions_adds_left_padding_for_minimax_2d_positions():
     from omlx.patches.minimax_m3_sparse_attention import _storage_q_positions

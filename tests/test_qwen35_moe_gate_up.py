@@ -10,6 +10,10 @@ from mlx_lm.models.switch_layers import SwitchGLU
 import omlx.patches.qwen35_moe_gate_up as patch_mod
 from omlx.patches.qwen35_moe_gate_up import apply_qwen35_moe_gate_up_fusion
 
+from tests.patch_families import LAGUNA
+
+PATCH_ISOLATION = (LAGUNA,)
+
 E, TOPK, HIDDEN, INTER = 8, 2, 64, 32
 
 

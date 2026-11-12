@@ -15,6 +15,10 @@ from mlx_vlm.speculative.cache_state import start_speculative_cache
 
 from omlx.patches import qwen35_gdn_prework as prework
 
+from tests.patch_families import GDN_PREWORK
+
+PATCH_ISOLATION = (GDN_PREWORK,)
+
 pytestmark = pytest.mark.skipif(not mx.metal.is_available(), reason="requires Metal")
 
 

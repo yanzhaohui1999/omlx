@@ -9,6 +9,10 @@ import types
 import mlx.core as mx
 import pytest
 
+from tests.patch_families import SDPA256
+
+PATCH_ISOLATION = (SDPA256,)
+
 
 @pytest.fixture
 def _sdpa256_reset():

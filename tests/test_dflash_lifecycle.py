@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests.patch_families import DFLASH
+
+PATCH_ISOLATION = (DFLASH,)
+
 
 @pytest.fixture
 def _clear_backup_state():

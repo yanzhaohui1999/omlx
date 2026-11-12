@@ -11,6 +11,10 @@ from mlx_lm.models.cache import make_prompt_cache
 from omlx.patches.k2_horizon import apply_k2_horizon_patch
 from omlx.patches.k2_horizon.k2_horizon_model import GroupedRMSNorm, Model, ModelArgs
 
+from tests.patch_families import K2_HORIZON
+
+PATCH_ISOLATION = (K2_HORIZON,)
+
 
 def small_config(**overrides):
     return dict(
