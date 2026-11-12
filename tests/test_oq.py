@@ -87,6 +87,11 @@ from omlx.oq import (
     validate_quantizable,
 )
 
+from tests.patch_families import GLM5_NEXT, INKLING, MINIMAX_M3
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (GLM5_NEXT, INKLING, MINIMAX_M3, QWEN4_COMPAT)
+
 # =============================================================================
 # Test universal_quant_predicate
 # =============================================================================

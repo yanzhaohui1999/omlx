@@ -16,6 +16,10 @@ import mlx_vlm.utils as _vu  # noqa: E402
 from omlx.engine.vlm import _strip_vision_config_if_orphaned  # noqa: E402
 from omlx.model_discovery import discover_models  # noqa: E402
 
+from tests.patch_families import GEMMA4
+
+PATCH_ISOLATION = (GEMMA4,)
+
 MERGED_HEAD = {"mtp_assistant_config": {"num_hidden_layers": 4}}
 
 

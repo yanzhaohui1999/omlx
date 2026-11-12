@@ -14,6 +14,10 @@ from omlx.cache.paged_ssd_cache import numerics_revision_for_model
 from omlx.custom_kernels.nax import is_nax_available
 from omlx.custom_kernels.quant_matmul import fast as quant_fast
 
+from tests.patch_families import MINIMAX_M3
+
+PATCH_ISOLATION = (MINIMAX_M3,)
+
 
 def test_minimax_m3_compat_installs_vendor_modules():
     from omlx.patches.mlx_vlm_minimax_m3_compat import (

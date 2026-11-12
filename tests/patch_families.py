@@ -39,14 +39,11 @@ from omlx.patches import (
     arrays_cache_extract,
     bailing_hybrid,
     deepseek_v4,
-    dflash_glm5,
-    dflash_lifecycle,
     gemma4_audio,
     glm_moe_dsa,
     index_cache,
     k2_horizon,
     laguna,
-    minimax_m3_sparse_attention,
     mlx_lm_mtp,
     mlx_lm_sharded_load,
     mlx_vlm_glm5_next_compat,
@@ -166,6 +163,14 @@ GLM5_NEXT = patch_family(
         "mlx_vlm.models.glm5_next.language",
         "mlx_vlm.models.glm5_next.hc_prefill",
         "mlx_vlm.models.glm5_next.processing",
+        # Applying this overlay also installs the pooling cache. Some tests
+        # (oq round-trips) go on to load a deepseek_v4 model, which registers
+        # these too; put them back with the same boundary.
+        "mlx_lm.models.deepseek_v4",
+        "mlx_lm.models.deepseek_v4_mtp",
+        "mlx_lm.models.hyper_connection",
+        "mlx_lm.chat_templates.deepseek_v4",
+        "mlx_lm.tool_parsers.deepseek_v4",
     ),
 )
 
@@ -265,10 +270,6 @@ SDPA256 = patch_family(
     module_prefixes=("mlx_lm.models.", "mlx_vlm.models."),
 )
 
-DFLASH = patch_family(
-    modules=(dflash_lifecycle, dflash_glm5),
-)
-
 INDEX_CACHE = patch_family(
     modules=(index_cache, mlx_lm.models, mlx_vlm.models),
 )
@@ -279,10 +280,6 @@ GDN_PREWORK = patch_family(
 
 Q4_MLP = patch_family(
     modules=(qwen35_q4_mlp, mlx_vlm.models, mlx_vlm.models.qwen3_5.language),
-)
-
-M3_SPARSE = patch_family(
-    modules=(minimax_m3_sparse_attention, mlx_lm.models),
 )
 
 MOE_ROUTER = patch_family(

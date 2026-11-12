@@ -19,6 +19,10 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+
 try:
     import mlx.core as mx
     import mlx.nn as nn

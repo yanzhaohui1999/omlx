@@ -36,6 +36,10 @@ from omlx.patches import qwen35_verify_qmm
 from omlx.patches.mlx_vlm_glm5_next_compat import decode_kernels as dk
 from omlx.utils.layer_pipeline import LayerPipeline
 
+from tests.patch_families import GLM5_NEXT, INKLING
+
+PATCH_ISOLATION = (GLM5_NEXT, INKLING)
+
 
 @pytest.fixture(autouse=True)
 def _apply_glm5_next_compat():

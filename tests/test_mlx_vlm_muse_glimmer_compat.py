@@ -14,6 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.patch_families import MUSE_GLIMMER
+
+PATCH_ISOLATION = (MUSE_GLIMMER,)
+
 try:
     import mlx.core as mx
 

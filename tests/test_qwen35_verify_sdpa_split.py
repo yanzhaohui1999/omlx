@@ -23,6 +23,11 @@ from omlx.patches.qwen35_verify_sdpa_split import (
     _wide_causal_sdpa,
 )
 
+from tests.patch_families import VERIFY_SPLIT
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (VERIFY_SPLIT, QWEN4_COMPAT)
+
 HQ, HKV, HD = 24, 4, 256
 
 

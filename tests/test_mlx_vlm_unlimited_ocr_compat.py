@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.patch_families import UNLIMITED_OCR
+
+PATCH_ISOLATION = (UNLIMITED_OCR,)
+
 
 def test_unlimited_ocr_compat_uses_upstream_module():
     from omlx.patches.mlx_vlm_unlimited_ocr_compat import (
