@@ -93,6 +93,27 @@ def test_restore_is_idempotent_and_discovery_is_lazy():
     assert module.FLAG is False
 
 
+def test_module_prefixes_snapshot_loaded_submodules_without_importing():
+    prefix = "tests_fake_prefix."
+    module = _fake_module()
+    module.__name__ = prefix + "model"
+    late = _fake_module()
+    late.__name__ = prefix + "late"
+    sys.modules[module.__name__] = module
+    try:
+        family = patch_family(module_prefixes=(prefix,))
+        family.capture()
+        sys.modules[late.__name__] = late
+        with isolated(family):
+            module.FLAG = True
+            late.FLAG = True
+        assert module.FLAG is False
+        assert late.FLAG is True  # imported after capture: not the family's job
+    finally:
+        sys.modules.pop(module.__name__, None)
+        sys.modules.pop(late.__name__, None)
+
+
 def test_families_of_normalizes_declarations():
     module = _fake_module()
     family = patch_family(modules=(module,))

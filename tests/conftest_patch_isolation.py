@@ -32,7 +32,9 @@ other attribute is compared by identity and put back if it was rebound.  That
 covers ``_APPLIED`` flags, ``_GDN_MODULES``-style registries and package
 ``__path__`` lists without listing a single global by name.  ``packages=``
 extends the snapshot to every submodule of a patch package, which is what the
-orchestrator-style patches need.
+orchestrator-style patches need.  ``module_prefixes=`` snapshots the
+already-imported modules whose name starts with a prefix (no imports), for
+overlays that rebind a function on every loaded model module.
 
 Limit: only *module-level* state is restored.  Class-level monkey-patches
 (``TextModel.__call__ = ...``) are production behavior and stay installed;
@@ -178,10 +180,12 @@ class PatchFamily:
         *,
         modules: Iterable[ModuleType] = (),
         packages: Iterable[str] = (),
+        module_prefixes: Iterable[str] = (),
         sys_modules: Iterable[str] = (),
     ) -> None:
         self._modules = tuple(modules)
         self._packages = tuple(packages)
+        self._module_prefixes = tuple(module_prefixes)
         self._sys_modules = tuple(sys_modules)
         self._pristine: tuple[tuple[_ModuleSnapshot, ...], dict[str, ModuleType]] | None = None
 
@@ -205,11 +209,26 @@ class PatchFamily:
     def _members(self) -> list[ModuleType]:
         seen: set[int] = set()
         members: list[ModuleType] = []
-        for module in (*self._modules, *self._package_members()):
+
+        def add(module: ModuleType) -> None:
             if id(module) in seen:
-                continue
+                return
             seen.add(id(module))
             members.append(module)
+
+        for module in self._modules:
+            add(module)
+        # ``module_prefixes`` snapshots every already-imported submodule. This is
+        # what the SDPA sweep patches need: they rebind the function on every
+        # loaded ``mlx_lm.models.*`` / ``mlx_vlm.models.*`` module, and importing
+        # the whole package here is both slow and unsafe (some optional model
+        # modules abort the interpreter on import).
+        for prefix in self._module_prefixes:
+            for name, module in list(sys.modules.items()):
+                if module is not None and name.startswith(prefix):
+                    add(module)
+        for module in self._package_members():
+            add(module)
         return members
 
     # -- snapshot / restore -------------------------------------------------
@@ -270,10 +289,16 @@ def patch_family(
     *,
     modules: Iterable[ModuleType] = (),
     packages: Iterable[str] = (),
+    module_prefixes: Iterable[str] = (),
     sys_modules: Iterable[str] = (),
 ) -> PatchFamily:
     """Build a :class:`PatchFamily`; see the module docstring for usage."""
-    return PatchFamily(modules=modules, packages=packages, sys_modules=sys_modules)
+    return PatchFamily(
+        modules=modules,
+        packages=packages,
+        module_prefixes=module_prefixes,
+        sys_modules=sys_modules,
+    )
 
 
 def capture_pristine(families: Iterable[PatchFamily]) -> None:
