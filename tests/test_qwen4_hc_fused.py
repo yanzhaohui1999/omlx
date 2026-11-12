@@ -13,7 +13,10 @@ import pytest
 
 from omlx.custom_kernels.nax import is_nax_available
 from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT
 from tests.test_mlx_vlm_qwen4_exp_compat import _tiny_config
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
 
 
 @pytest.fixture(autouse=True)

@@ -13,6 +13,9 @@ import pytest
 
 from omlx.utils import model_loading
 from omlx.utils.model_loading import maybe_apply_pre_load_patches
+from tests.patch_families import GLM_MOE_DSA
+
+PATCH_ISOLATION = (GLM_MOE_DSA,)
 
 
 def _write_config(tmp_path, body: str) -> str:
@@ -259,8 +262,9 @@ def test_glm_adaptive_prefill_config_env_overrides(monkeypatch):
 def test_glm_patch_keeps_vendored_helpers_private():
     glm_moe_dsa = _load_patched_glm_module()
 
-    from omlx.patches.glm_moe_dsa import deepseek_v32 as vendored_deepseek_v32
     from mlx_lm.models import deepseek_v32 as upstream_deepseek_v32
+
+    from omlx.patches.glm_moe_dsa import deepseek_v32 as vendored_deepseek_v32
 
     assert getattr(glm_moe_dsa, "_OMLX_GLM_DSA_OPTIMIZED", False)
     assert sys.modules["mlx_lm.models.glm_moe_dsa"] is glm_moe_dsa
@@ -1308,6 +1312,7 @@ def _decode_only_batch_generator(stream) -> SimpleNamespace:
             return ["generation"]
 
     from mlx_lm.generate import BatchCounters
+
     from omlx.patches.glm_moe_dsa.generate_patch import _AdaptivePrefillConfig
 
     return SimpleNamespace(

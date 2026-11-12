@@ -21,6 +21,10 @@ from omlx.patches import qwen35_yarn
 compat.apply_mlx_vlm_qwen4_exp_compat_patch()
 qwen4_language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
 
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+
 
 def _tiny_config():
     compat.apply_mlx_vlm_qwen4_exp_compat_patch()

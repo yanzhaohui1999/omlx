@@ -18,6 +18,10 @@ from omlx.oq import quantize_oq_streaming
 from omlx.patches.mlx_lm_mtp import batch_generator, set_mtp_active, set_mtp_depth
 from omlx.utils.model_loading import maybe_apply_pre_load_patches
 
+from tests.patch_families import BAILING
+
+PATCH_ISOLATION = (BAILING,)
+
 
 def _minimal_config(**overrides):
     config = {

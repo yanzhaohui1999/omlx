@@ -8,6 +8,9 @@ import mlx.core as mx
 import pytest
 
 from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
 
 
 @pytest.fixture(autouse=True)
