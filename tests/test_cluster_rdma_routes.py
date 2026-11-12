@@ -19,6 +19,13 @@ from omlx.cluster.rdma.verification import (
     ProbeMeasurements,
     link_identity,
 )
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_launch_links_state():
+    with isolate_globals(launch_links, '_claims'):
+        yield
 
 _NODES = (
     NodeAddress(

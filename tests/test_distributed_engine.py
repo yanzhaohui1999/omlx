@@ -18,6 +18,15 @@ from omlx.engine.distributed import (
     DistributedInferenceError,
 )
 
+import omlx.cluster.strategy_benchmarks as strategy_benchmarks
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_strategy_benchmarks_state():
+    with isolate_globals(strategy_benchmarks, '_configured_store'):
+        yield
+
 
 def _deployment() -> ClusterDeployment:
     return ClusterDeployment(

@@ -12,6 +12,13 @@ from omlx.cluster.deployment import ClusterDeployment, ClusterHost
 from omlx.cluster.planner import PipelineAssignment
 from omlx.cluster.rdma import launch_links
 from omlx.cluster.rdma.stage_plan import StageLink
+from tests.conftest_patch_isolation import isolate_globals
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_launch_links_state():
+    with isolate_globals(launch_links, '_claims'):
+        yield
 
 _LINK = StageLink(1, 0, "linka", "/tmp/mcdma-rpcd.linka.sock")
 _REPORT = {"active": True, "reason": "rank 1 sends to rank 0 over linka", "edges": []}
