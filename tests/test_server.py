@@ -1106,7 +1106,14 @@ class TestHealthPreloadReadiness:
     ],
 )
 def test_responses_reasoning_cache_policy(
-    monkeypatch, stream, model_type, template_default, kwargs, forced, expected
+    monkeypatch,
+    tmp_path,
+    stream,
+    model_type,
+    template_default,
+    kwargs,
+    forced,
+    expected,
 ):
     """Exercise cache policy through the real route before generation starts."""
     engine = MagicMock()
@@ -1118,6 +1125,10 @@ def test_responses_reasoning_cache_policy(
     engine.start = AsyncMock()
     engine.count_chat_tokens.return_value = 128
     pool = MagicMock()
+    # TestClient runs the lifespan, whose boundary-snapshot reset reads this
+    # attribute. An auto-created MagicMock makes Path(mock) resolve to a
+    # "MagicMock/..." directory under the repo root; pin it to tmp_path.
+    pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
     pool.preload_pinned_models = AsyncMock()
     pool.check_ttl_expirations = AsyncMock()
     pool.shutdown = AsyncMock()
