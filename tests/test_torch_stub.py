@@ -53,6 +53,16 @@ def _restore_sys_modules():
     sys.modules.update(saved)
 
 
+@pytest.fixture(autouse=True)
+def _restore_tvm_ffi_env(monkeypatch):
+    """Keep install()'s env mutation from leaking into later tests.
+
+    monkeypatch also restores a value the suite was started with, which the
+    previous bare ``os.environ.pop`` calls in individual tests did not.
+    """
+    monkeypatch.delenv("TVM_FFI_DISABLE_TORCH_C_DLPACK", raising=False)
+
+
 @pytest.fixture
 def stub_module():
     """Import a fresh copy of the stub module so its module-level state
@@ -251,15 +261,11 @@ def test_install_sets_tvm_ffi_dlpack_env_var(stub_module):
     """
     for k in _TOUCHED:
         sys.modules.pop(k, None)
-    os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
-    try:
-        with mock.patch(
-            "importlib.util.find_spec", side_effect=lambda name: None
-        ):
-            stub_module.install()
-        assert os.environ.get("TVM_FFI_DISABLE_TORCH_C_DLPACK") == "1"
-    finally:
-        os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
+    with mock.patch(
+        "importlib.util.find_spec", side_effect=lambda name: None
+    ):
+        stub_module.install()
+    assert os.environ.get("TVM_FFI_DISABLE_TORCH_C_DLPACK") == "1"
 
 
 def test_install_does_not_touch_env_var_when_real_torch_present(stub_module):
@@ -270,20 +276,16 @@ def test_install_does_not_touch_env_var_when_real_torch_present(stub_module):
     """
     for k in _TOUCHED:
         sys.modules.pop(k, None)
-    os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
-    try:
-        fake_spec = importlib.util.spec_from_loader("torch", loader=None)
-        with mock.patch(
-            "importlib.util.find_spec",
-            side_effect=lambda name: fake_spec if name == "torch" else None,
-        ):
-            result = stub_module.install()
-        assert result is False
-        assert "TVM_FFI_DISABLE_TORCH_C_DLPACK" not in os.environ, (
-            "real-torch path must leave the env var alone"
-        )
-    finally:
-        os.environ.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
+    fake_spec = importlib.util.spec_from_loader("torch", loader=None)
+    with mock.patch(
+        "importlib.util.find_spec",
+        side_effect=lambda name: fake_spec if name == "torch" else None,
+    ):
+        result = stub_module.install()
+    assert result is False
+    assert "TVM_FFI_DISABLE_TORCH_C_DLPACK" not in os.environ, (
+        "real-torch path must leave the env var alone"
+    )
 
 
 def test_missing_top_level_attribute_raises_attributeerror_and_logs(
