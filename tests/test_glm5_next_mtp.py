@@ -14,14 +14,27 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-pytest.importorskip("mlx_vlm.models.deepseek_v4")
-
 from omlx.patches.mlx_vlm_glm5_next_compat import (
     apply_mlx_vlm_glm5_next_compat_patch,
 )
 
-if not apply_mlx_vlm_glm5_next_compat_patch():
-    pytest.importorskip("mlx_vlm.models.glm5_next")
+pytest.importorskip("mlx_vlm.models.deepseek_v4")
+
+from tests.patch_families import GLM5_NEXT
+
+PATCH_ISOLATION = (GLM5_NEXT,)
+
+
+def _apply_glm5_next():
+    """Install the vendor overlay inside the module's isolation window."""
+    if not apply_mlx_vlm_glm5_next_compat_patch():
+        pytest.skip("mlx-vlm glm5_next vendor overlay unavailable")
+    import importlib
+
+    globals()["language"] = importlib.import_module("mlx_vlm.models.glm5_next.language")
+
+
+PATCH_ISOLATION_SETUP = _apply_glm5_next
 
 import copy
 import os
@@ -31,7 +44,6 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 from mlx.utils import tree_flatten
-from mlx_vlm.models.glm5_next import language
 
 from omlx.patches.mlx_lm_mtp import batch_generator as bg
 from omlx.patches.mlx_lm_mtp import batched_head
