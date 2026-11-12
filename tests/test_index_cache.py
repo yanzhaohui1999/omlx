@@ -3,6 +3,10 @@
 
 from unittest.mock import MagicMock, patch
 
+from tests.patch_families import INDEX_CACHE
+
+PATCH_ISOLATION = (INDEX_CACHE,)
+
 
 class TestBuildLayerPattern:
     """Test _build_layer_pattern function."""
