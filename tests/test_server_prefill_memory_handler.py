@@ -7,6 +7,8 @@ guard surfaces in production, so a refactor that changes either the
 error body shape or the HTTP code will be caught here.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -378,7 +380,7 @@ class TestResponsesEndpointReaches400:
 
         return srv.app
 
-    def test_v1_responses_returns_400_when_preflight_rejects(self):
+    def test_v1_responses_returns_400_when_preflight_rejects(self, tmp_path):
         from unittest.mock import MagicMock, patch
 
         import omlx.server as srv
@@ -394,6 +396,13 @@ class TestResponsesEndpointReaches400:
             from unittest.mock import AsyncMock
 
             fake_pool = MagicMock()
+            # The lifespan resets boundary snapshots under
+            # engine_pool._scheduler_config.paged_ssd_cache_dir; an
+            # auto-created MagicMock there would mkdir "MagicMock/" under
+            # the repo root. Pin it to tmp_path.
+            fake_pool._scheduler_config = SimpleNamespace(
+                paged_ssd_cache_dir=tmp_path
+            )
             fake_pool.get_entry = MagicMock(return_value=None)
             fake_pool.preload_pinned_models = AsyncMock()
             fake_pool.check_ttl_expirations = AsyncMock()

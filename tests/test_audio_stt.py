@@ -235,13 +235,17 @@ class TestSTTEngineLanguageForwarding:
 
 
 @pytest.fixture
-def server_audio_client():
+def server_audio_client(tmp_path):
     """TestClient using the full omlx server app with mocked pool."""
     from omlx.server import app
 
     _ensure_audio_routes(app)
 
     mock_pool = _make_mock_pool()
+    # The lifespan reads _scheduler_config.paged_ssd_cache_dir to reset
+    # boundary snapshots; pin it so the reset stays inside tmp_path instead
+    # of mkdir-ing "MagicMock/" under the repo root.
+    mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
 
     with patch("omlx.server._server_state") as mock_state:
         mock_state.engine_pool = mock_pool
@@ -1245,13 +1249,15 @@ class TestVideoContainerRemap:
 class TestSTTModelAliasResolution:
     """Verify that STT endpoint resolves model aliases (#489)."""
 
-    def test_transcription_resolves_alias(self):
+    def test_transcription_resolves_alias(self, tmp_path):
         """POST /v1/audio/transcriptions with alias resolves to real model ID."""
         from omlx.server import app
 
         _ensure_audio_routes(app)
 
         mock_pool = _make_mock_pool(model_id="Qwen3-ASR-1.7B-bf16")
+        # Keep the lifespan's boundary-snapshot reset inside tmp_path.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         mock_pool.resolve_model_id = MagicMock(
             return_value="Qwen3-ASR-1.7B-bf16"
         )
@@ -1277,13 +1283,15 @@ class TestSTTModelAliasResolution:
                     "Qwen3-ASR-1.7B-bf16"
                 )
 
-    def test_transcription_direct_model_id(self):
+    def test_transcription_direct_model_id(self, tmp_path):
         """POST /v1/audio/transcriptions with direct model ID works without alias."""
         from omlx.server import app
 
         _ensure_audio_routes(app)
 
         mock_pool = _make_mock_pool(model_id="Qwen3-ASR-1.7B-bf16")
+        # Keep the lifespan's boundary-snapshot reset inside tmp_path.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         # resolve_model_id returns the same ID when no alias matches
         mock_pool.resolve_model_id = MagicMock(
             return_value="Qwen3-ASR-1.7B-bf16"

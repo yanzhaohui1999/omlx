@@ -8,6 +8,7 @@ All tests use FastAPI TestClient with a mocked EnginePool — no mlx-audio
 or real model loading required.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -99,11 +100,15 @@ class TestModelsListAudio:
         )
 
     @pytest.fixture
-    def client_with_stt(self, stt_entry):
+    def client_with_stt(self, stt_entry, tmp_path):
         """TestClient with a pool containing only an STT model."""
         from omlx.server import app
 
         mock_pool = _make_pool([stt_entry])
+        # The lifespan resets boundary snapshots under
+        # engine_pool._scheduler_config.paged_ssd_cache_dir; an auto-created
+        # MagicMock there would mkdir "MagicMock/" under the repo root.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         with patch("omlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None
@@ -121,11 +126,13 @@ class TestModelsListAudio:
                 yield client, mock_pool
 
     @pytest.fixture
-    def client_with_mixed(self, stt_entry, tts_entry, llm_entry):
+    def client_with_mixed(self, stt_entry, tts_entry, llm_entry, tmp_path):
         """TestClient with a pool containing STT + TTS + LLM models."""
         from omlx.server import app
 
         mock_pool = _make_pool([stt_entry, tts_entry, llm_entry])
+        # See client_with_stt: keep the lifespan reset inside tmp_path.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         with patch("omlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
             mock_state.global_settings = None

@@ -12,6 +12,7 @@ import base64
 import io
 import struct
 import wave
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -82,13 +83,17 @@ def _ensure_audio_routes(app):
 
 
 @pytest.fixture
-def server_tts_client():
+def server_tts_client(tmp_path):
     """TestClient using the full omlx server app with mocked TTS pool."""
     from omlx.server import app
 
     _ensure_audio_routes(app)
 
     mock_pool = _make_mock_pool()
+    # The lifespan reads _scheduler_config.paged_ssd_cache_dir to reset
+    # boundary snapshots; pin it so the reset stays inside tmp_path instead
+    # of mkdir-ing "MagicMock/" under the repo root.
+    mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
 
     with patch("omlx.server._server_state") as mock_state:
         mock_state.engine_pool = mock_pool
@@ -754,13 +759,15 @@ class TestTTSStreaming:
 class TestTTSModelAliasResolution:
     """Verify that audio endpoints resolve model aliases (#489)."""
 
-    def test_speech_resolves_alias(self):
+    def test_speech_resolves_alias(self, tmp_path):
         """POST /v1/audio/speech with alias resolves to real model ID."""
         from omlx.server import app
 
         _ensure_audio_routes(app)
 
         mock_pool = _make_mock_pool(model_id="Qwen3-TTS-12Hz-1.7B-Base-bf16")
+        # Keep the lifespan's boundary-snapshot reset inside tmp_path.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         # Configure alias resolution on the pool
         mock_pool.resolve_model_id = MagicMock(
             return_value="Qwen3-TTS-12Hz-1.7B-Base-bf16"
@@ -789,13 +796,15 @@ class TestTTSModelAliasResolution:
                     "Qwen3-TTS-12Hz-1.7B-Base-bf16"
                 )
 
-    def test_speech_direct_model_id(self):
+    def test_speech_direct_model_id(self, tmp_path):
         """POST /v1/audio/speech with direct model ID works without alias."""
         from omlx.server import app
 
         _ensure_audio_routes(app)
 
         mock_pool = _make_mock_pool(model_id="Qwen3-TTS-12Hz-1.7B-Base-bf16")
+        # Keep the lifespan's boundary-snapshot reset inside tmp_path.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
         mock_pool.resolve_model_id = MagicMock(
             return_value="Qwen3-TTS-12Hz-1.7B-Base-bf16"
         )
@@ -1164,12 +1173,14 @@ class TestTTSVoiceCloneEndpoint:
     """POST /v1/audio/speech with ref_audio base64."""
 
     @pytest.fixture
-    def clone_client(self):
+    def clone_client(self, tmp_path):
         """TestClient with mocked TTS pool for voice clone tests."""
         from omlx.server import app
 
         _ensure_audio_routes(app)
         mock_pool = _make_mock_pool()
+        # Keep the lifespan's boundary-snapshot reset inside tmp_path.
+        mock_pool._scheduler_config = SimpleNamespace(paged_ssd_cache_dir=tmp_path)
 
         with patch("omlx.server._server_state") as mock_state:
             mock_state.engine_pool = mock_pool
