@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+from tests.patch_families import UNLIMITED_OCR
+
+PATCH_ISOLATION = (UNLIMITED_OCR,)
+
 
 def test_unlimited_ocr_compat_installs_vendor_module():
     from omlx.patches.mlx_vlm_unlimited_ocr_compat import (

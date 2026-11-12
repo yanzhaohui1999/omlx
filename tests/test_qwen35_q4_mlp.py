@@ -7,6 +7,10 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
+from tests.patch_families import MUSE_GLIMMER, Q4_MLP
+
+PATCH_ISOLATION = (MUSE_GLIMMER, Q4_MLP)
+
 
 def _require_q4_kernel():
     from omlx.custom_kernels.qwen35_prefill import fast

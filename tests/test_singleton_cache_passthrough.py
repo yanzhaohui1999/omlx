@@ -10,6 +10,10 @@ from mlx_vlm.turboquant import TurboQuantKVCache
 import omlx.scheduler  # noqa: F401  (applies BatchGenerator cache patches)
 from omlx.turboquant_kv import BatchTurboQuantKVCache
 
+from tests.qwen4_vendored import QWEN4_COMPAT
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+
 
 def _kv_cache(length: int) -> KVCache:
     cache = KVCache()

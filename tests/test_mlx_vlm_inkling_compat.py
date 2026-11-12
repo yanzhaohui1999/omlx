@@ -13,6 +13,10 @@ import json
 
 import pytest
 
+from tests.patch_families import INKLING
+
+PATCH_ISOLATION = (INKLING,)
+
 try:
     import mlx.core as mx
 

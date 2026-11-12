@@ -14,6 +14,10 @@ pytest.importorskip("dflash_mlx")
 
 import mlx.nn as nn  # noqa: E402
 
+from tests.patch_families import DFLASH, GLM5_NEXT
+
+PATCH_ISOLATION = (DFLASH, GLM5_NEXT)
+
 
 def _fake_target(*, hidden_size=4096, vocab_size=154880, layers=45):
     inner = SimpleNamespace(

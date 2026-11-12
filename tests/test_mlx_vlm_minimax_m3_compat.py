@@ -8,6 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.patch_families import MINIMAX_M3
+
+PATCH_ISOLATION = (MINIMAX_M3,)
+
 
 def test_minimax_m3_compat_installs_vendor_modules():
     from omlx.patches.mlx_vlm_minimax_m3_compat import (

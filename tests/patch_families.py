@@ -166,6 +166,14 @@ GLM5_NEXT = patch_family(
         "mlx_vlm.models.glm5_next.language",
         "mlx_vlm.models.glm5_next.hc_prefill",
         "mlx_vlm.models.glm5_next.processing",
+        # Applying this overlay also installs the pooling cache. Some tests
+        # (oq round-trips) go on to load a deepseek_v4 model, which registers
+        # these too; put them back with the same boundary.
+        "mlx_lm.models.deepseek_v4",
+        "mlx_lm.models.deepseek_v4_mtp",
+        "mlx_lm.models.hyper_connection",
+        "mlx_lm.chat_templates.deepseek_v4",
+        "mlx_lm.tool_parsers.deepseek_v4",
     ),
 )
 

@@ -25,6 +25,10 @@ from omlx.patches.mlx_vlm_glm5_next_compat import (
     apply_mlx_vlm_glm5_next_compat_patch,
 )
 
+from tests.patch_families import GEMMA4, GLM5_NEXT
+
+PATCH_ISOLATION = (GEMMA4, GLM5_NEXT)
+
 try:
     import mlx.core as mx
 
