@@ -15,15 +15,21 @@ which is half a bf16 ULP of pure avoidable error.
 
 from __future__ import annotations
 
-import importlib
-
 import mlx.core as mx
 import pytest
 
-from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
+
+def _load_vendored():
+    import_into(globals(), "mlx_vlm.models.qwen4_exp.language")
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+language = None
 
 BF16_ULP = 2.0**-7
 FP32_ULP = 2.0**-23

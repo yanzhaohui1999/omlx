@@ -3,14 +3,22 @@
 
 from __future__ import annotations
 
-from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
 
-from mlx_vlm.models.qwen4_exp import (  # noqa: E402
-    TextConfig,
-    language,
-)
+def _load_vendored():
+    package = import_into(globals(), "mlx_vlm.models.qwen4_exp")
+    global TextConfig, language
+    TextConfig = package.TextConfig
+    language = package.language
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+TextConfig = None
+language = None
 
 
 def _config(

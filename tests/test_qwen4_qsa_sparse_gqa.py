@@ -9,10 +9,23 @@ import pytest
 
 from omlx.custom_kernels.attention import fast
 from omlx.custom_kernels.nax import is_nax_available
-from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-from mlx_vlm.models.qwen4_exp import qsa_fast, qsa_nax  # noqa: E402
+
+def _load_vendored():
+    import_into(
+        globals(),
+        "mlx_vlm.models.qwen4_exp.qsa_fast",
+        "mlx_vlm.models.qwen4_exp.qsa_nax",
+    )
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+qsa_fast = None
+qsa_nax = None
 
 
 def _native_available() -> bool:

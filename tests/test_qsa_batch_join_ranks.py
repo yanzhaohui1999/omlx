@@ -25,16 +25,22 @@ import pytest
 
 mx = pytest.importorskip("mlx.core")
 
-from omlx.patches.mlx_vlm_qwen4_exp_compat import (  # noqa: E402
-    apply_mlx_vlm_qwen4_exp_compat_patch,
-)
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into  # noqa: E402
 
-apply_mlx_vlm_qwen4_exp_compat_patch()
 
-from mlx_vlm.models.qwen4_exp.language import (  # noqa: E402
-    BatchQSAKVCache,
-    QSAKVCache,
-)
+def _load_vendored():
+    module = import_into(globals(), "mlx_vlm.models.qwen4_exp.language")
+    global BatchQSAKVCache, QSAKVCache
+    BatchQSAKVCache = module.BatchQSAKVCache
+    QSAKVCache = module.QSAKVCache
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+BatchQSAKVCache = None
+QSAKVCache = None
 
 D = 4
 

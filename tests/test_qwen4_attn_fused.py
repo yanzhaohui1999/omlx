@@ -13,38 +13,66 @@ a BF16 output could hide a different summation order.
 from __future__ import annotations
 
 import dataclasses
-import importlib
 
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from omlx.patches import qwen35_verify_qmm
+from omlx.patches.mlx_vlm_mtp import qwen35_verify_linear
+from omlx.patches.qwen35_verify_sdpa_split import apply_qwen35_verify_sdpa_split_patch
 from omlx.patches.qwen35_yarn import apply_qwen35_yarn_patch
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
 pytestmark = pytest.mark.skipif(not mx.metal.is_available(), reason="requires Metal")
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
-attn_fused = importlib.import_module("mlx_vlm.models.qwen4_exp.attn_fused")
-qwen4_exp = importlib.import_module("mlx_vlm.models.qwen4_exp")
 
-from omlx.patches import qwen35_verify_qmm  # noqa: E402
-from omlx.patches.mlx_vlm_mtp import qwen35_verify_linear  # noqa: E402
-from omlx.patches.qwen35_verify_sdpa_split import (  # noqa: E402
-    apply_qwen35_verify_sdpa_split_patch,
-)
+def _load_vendored():
+    """Install the process-wide overlays inside the isolated test window."""
+    qwen35_verify_qmm.apply_verify_qmm_patch()
+    qwen35_verify_linear.apply()
+    apply_qwen35_verify_sdpa_split_patch()
+    apply_qwen35_yarn_patch()
+    import_into(
+        globals(),
+        "mlx_vlm.models.qwen4_exp.language",
+        "mlx_vlm.models.qwen4_exp.attn_fused",
+        "mlx_vlm.models.qwen4_exp",
+        "mlx_vlm.models.qwen3_5.language=q35_language",
+        "mlx_vlm.models.qwen3_5.speculative_verifier=q35_verifier",
+    )
+    global _CONFIG, _YARN_CONFIG
+    _CONFIG = _build_config()
+    # Static YaRN at factor 4: the MLX path runs mlx-vlm's eager MRoPE.
+    _YARN_CONFIG = dataclasses.replace(
+        _CONFIG,
+        rope_parameters={
+            **_CONFIG.rope_parameters,
+            "type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 262144,
+        },
+    )
 
-qwen35_verify_qmm.apply_verify_qmm_patch()
-qwen35_verify_linear.apply()
-apply_qwen35_verify_sdpa_split_patch()
-apply_qwen35_yarn_patch()
-q35_language = importlib.import_module("mlx_vlm.models.qwen3_5.language")
-q35_verifier = importlib.import_module("mlx_vlm.models.qwen3_5.speculative_verifier")
 
-requires_kernels = pytest.mark.skipif(
-    attn_fused._gpu_class() != "d", reason="MLX's vector SDPA plan is transcribed for 'd' GPUs"
-)
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+language = None
+attn_fused = None
+qwen4_exp = None
+q35_language = None
+q35_verifier = None
+_CONFIG = None
+_YARN_CONFIG = None
+
+
+@pytest.fixture
+def requires_kernels():
+    if attn_fused._gpu_class() != "d":
+        pytest.skip("MLX's vector SDPA plan is transcribed for 'd' GPUs")
+
 
 
 def _float_cache_sdpa(queries, keys, values, cache, scale, mask, sinks=None):
@@ -64,67 +92,57 @@ def _stock_sdpa_helper(monkeypatch):
     )
 
 
-_CONFIG = qwen4_exp.TextConfig(
-    model_type="qwen4_exp_text",
-    hidden_size=2560,
-    num_hidden_layers=4,
-    num_attention_heads=24,
-    num_key_value_heads=2,
-    head_dim=256,
-    linear_num_value_heads=4,
-    linear_num_key_heads=2,
-    linear_key_head_dim=8,
-    linear_value_head_dim=8,
-    linear_conv_kernel_dim=3,
-    num_experts=4,
-    num_experts_per_tok=2,
-    shared_expert_intermediate_size=16,
-    moe_intermediate_size=16,
-    rms_norm_eps=1e-6,
-    vocab_size=64,
-    max_position_embeddings=262144,
-    hc_count=2,
-    hc_lowrank=8,
-    layer_types=["linear_attention"] * 3 + ["full_attention"],
-    ple_layer_ids=[],
-    ple_embed_dim=32,
-    ple_conv_kernel_size=3,
-    ngram_size=3,
-    heads_per_ngram=2,
-    ngram_vocab_size_base=17,
-    make_ngram_vocab_size_divisible_by=4,
-    split_ngram_parts=4,
-    indexer_n_heads=4,
-    indexer_kv_heads=1,
-    indexer_head_dim=128,
-    indexer_budget=2048,
-    indexer_compress_ratio=4,
-    eos_token_id=1,
-    rope_parameters={
-        "type": "default",
-        "mrope_interleaved": True,
-        "mrope_section": [11, 11, 10],
-        "partial_rotary_factor": 0.25,
-        "rope_theta": 10_000_000,
-    },
-)
+def _build_config():
+    return qwen4_exp.TextConfig(
+        model_type="qwen4_exp_text",
+        hidden_size=2560,
+        num_hidden_layers=4,
+        num_attention_heads=24,
+        num_key_value_heads=2,
+        head_dim=256,
+        linear_num_value_heads=4,
+        linear_num_key_heads=2,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_conv_kernel_dim=3,
+        num_experts=4,
+        num_experts_per_tok=2,
+        shared_expert_intermediate_size=16,
+        moe_intermediate_size=16,
+        rms_norm_eps=1e-6,
+        vocab_size=64,
+        max_position_embeddings=262144,
+        hc_count=2,
+        hc_lowrank=8,
+        layer_types=["linear_attention"] * 3 + ["full_attention"],
+        ple_layer_ids=[],
+        ple_embed_dim=32,
+        ple_conv_kernel_size=3,
+        ngram_size=3,
+        heads_per_ngram=2,
+        ngram_vocab_size_base=17,
+        make_ngram_vocab_size_divisible_by=4,
+        split_ngram_parts=4,
+        indexer_n_heads=4,
+        indexer_kv_heads=1,
+        indexer_head_dim=128,
+        indexer_budget=2048,
+        indexer_compress_ratio=4,
+        eos_token_id=1,
+        rope_parameters={
+            "type": "default",
+            "mrope_interleaved": True,
+            "mrope_section": [11, 11, 10],
+            "partial_rotary_factor": 0.25,
+            "rope_theta": 10_000_000,
+        },    )
 
 
-# Static YaRN at factor 4: the MLX path runs mlx-vlm's eager MRoPE.
-_YARN_CONFIG = dataclasses.replace(
-    _CONFIG,
-    rope_parameters={
-        **_CONFIG.rope_parameters,
-        "type": "yarn",
-        "factor": 4.0,
-        "original_max_position_embeddings": 262144,
-    },
-)
 
 
-def _attention(seed: int, config=_CONFIG):
+def _attention(seed: int, config=None):
     mx.random.seed(seed)
-    attn = language.Qwen4ExpAttention(config)
+    attn = language.Qwen4ExpAttention(_CONFIG if config is None else config)
     for _, module in attn.named_modules():
         if isinstance(module, nn.Linear):
             fan_in = module.weight.shape[1]
@@ -242,7 +260,7 @@ def _assert_fused_equals_mlx(monkeypatch, attn, cache, rows, seeds):
 # rows sitting right below MLX's two-pass switch at 1024 keys (a decode at
 # 1023 sees 1024 keys); 1500: two-pass rows; 2043: the last window (eight
 # rows) the indexer still leaves dense.
-@requires_kernels
+@pytest.mark.usefixtures("requires_kernels")
 @pytest.mark.parametrize("context", [0, 700, 1016, 1023, 1500, 2043])
 @pytest.mark.parametrize("rows", [1, 2, 3, 4, 8, 16])
 def test_dense_rows_equal_mlx_path(monkeypatch, context, rows):
@@ -259,7 +277,7 @@ def test_dense_rows_equal_mlx_path(monkeypatch, context, rows):
 # Past the block budget: a decode row (_masked_decode) and a row-exact verify
 # window (_row_exact_masked_verify) keep the indexer's selection and the
 # selected-keys SDPA around the fused projections, norms and MRoPE.
-@requires_kernels
+@pytest.mark.usefixtures("requires_kernels")
 @pytest.mark.parametrize("context", [2060, 24000])
 def test_masked_rows_equal_mlx_path(monkeypatch, context):
     attn = _attention(seed=7)
@@ -269,7 +287,7 @@ def test_masked_rows_equal_mlx_path(monkeypatch, context):
         assert prologues == [rows]
 
 
-@requires_kernels
+@pytest.mark.usefixtures("requires_kernels")
 @pytest.mark.parametrize("context", [0, 1023, 1500, 2043])
 @pytest.mark.parametrize("rows", [1, 4, 16])
 def test_yarn_dense_rows_equal_mlx_path(monkeypatch, context, rows):
@@ -281,7 +299,7 @@ def test_yarn_dense_rows_equal_mlx_path(monkeypatch, context, rows):
         assert prologues == [rows]
 
 
-@requires_kernels
+@pytest.mark.usefixtures("requires_kernels")
 def test_yarn_masked_rows_equal_mlx_path(monkeypatch):
     attn = _attention(seed=7, config=_YARN_CONFIG)
     cache = _prefill_chunked(attn, 2060, seed=8)
@@ -332,7 +350,7 @@ def _mlx_sdpa_gate(queries, keys, values, gate, scale):
 
 # FP32 end to end: every accumulation order shows in the output. Key counts
 # cover one pass (1..1023, partial last chain groups) and two passes (1024+).
-@requires_kernels
+@pytest.mark.usefixtures("requires_kernels")
 @pytest.mark.parametrize("keys", [1, 5, 33, 130, 1000, 1023, 1024, 1027, 1500, 2051])
 @pytest.mark.parametrize("rows", [1, 3, 4, 8, 16])
 @pytest.mark.parametrize("spread", [1.0, 6.0])
@@ -358,9 +376,10 @@ def test_fp32_sdpa_gate_matches_mlx(keys, rows, spread):
 
 @pytest.mark.parametrize("rows", [1, 4, 8, 16, 300])
 @pytest.mark.parametrize("pos_ndim", [2, 3])
-@pytest.mark.parametrize("config", [_CONFIG, _YARN_CONFIG], ids=["default", "yarn"])
+@pytest.mark.parametrize("config_name", ["default", "yarn"])
 @pytest.mark.parametrize("dtype", [mx.float32, mx.bfloat16], ids=["fp32", "bf16"])
-def test_prep_matches_norms_and_mrope(rows, pos_ndim, config, dtype):
+def test_prep_matches_norms_and_mrope(rows, pos_ndim, config_name, dtype):
+    config = _YARN_CONFIG if config_name == "yarn" else _CONFIG
     attn = _attention(seed=9, config=config)
     mx.random.seed(rows + pos_ndim)
     q_proj = (mx.random.normal((rows, 24 * 512)) * 4).astype(dtype)
@@ -392,8 +411,9 @@ def test_prep_matches_norms_and_mrope(rows, pos_ndim, config, dtype):
     assert _bit_equal(got_k, want_k)
 
 
-@pytest.mark.parametrize("config", [_CONFIG, _YARN_CONFIG], ids=["default", "yarn"])
-def test_gathered_prefill_prep_matches_mlx_path(monkeypatch, config):
+@pytest.mark.parametrize("config_name", ["default", "yarn"])
+def test_gathered_prefill_prep_matches_mlx_path(monkeypatch, config_name):
+    config = _YARN_CONFIG if config_name == "yarn" else _CONFIG
     """Prefill chunks before, across and past the QSA budget take the q/k
     norms and MRoPE from ``prep_qk``: outputs and cache equal the MLX ops'."""
     # A 256-token budget keeps the same three chunk routes at an eighth of the length.

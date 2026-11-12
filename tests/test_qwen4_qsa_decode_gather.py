@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib
 import math
 from types import SimpleNamespace
 
@@ -13,10 +12,24 @@ import pytest
 
 from omlx import memory_monitor
 from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
-qsa_fast = importlib.import_module("mlx_vlm.models.qwen4_exp.qsa_fast")
+
+
+def _load_vendored():
+    import_into(
+        globals(),
+        "mlx_vlm.models.qwen4_exp.language",
+        "mlx_vlm.models.qwen4_exp.qsa_fast",
+    )
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+language = None
+qsa_fast = None
 
 
 @pytest.fixture(autouse=True)

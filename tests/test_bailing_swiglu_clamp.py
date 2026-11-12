@@ -7,22 +7,35 @@ those clamps. Without them the late layers run unclamped; measured on
 Ling-3.0-flash that costs 17 points of HumanEval (88.41% -> 71.34%).
 """
 
+import importlib
+
 import pytest
 
 mx = pytest.importorskip("mlx.core")
 
-from omlx.patches.bailing_hybrid import apply_bailing_hybrid_patch  # noqa: E402
+from omlx.patches import bailing_hybrid  # noqa: E402
 from omlx.patches.bailing_hybrid.swiglu_clamp import (  # noqa: E402
     bind_limits,
     layer_swiglu_limit,
 )
+from tests.patch_families import BAILING  # noqa: E402
 
-# The live module may be oMLX's vendored copy or an mlx-lm build that already
-# ships bailing_hybrid; apply() resolves whichever and installs the clamp on
-# it. Its return value only says which, so it is not a skip condition.
-apply_bailing_hybrid_patch()
 
-bh = pytest.importorskip("mlx_lm.models.bailing_hybrid")
+def _load_vendored():
+    # The live module may be oMLX's vendored copy or an mlx-lm build that
+    # already ships bailing_hybrid; apply() resolves whichever and installs the
+    # clamp on it. Its return value only says which, so it is not a skip
+    # condition.
+    bailing_hybrid.apply_bailing_hybrid_patch()
+    global bh
+    bh = importlib.import_module("mlx_lm.models.bailing_hybrid")
+
+
+PATCH_ISOLATION = (BAILING,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+bh = None
 
 HID = 128
 N_LAYERS = 6
