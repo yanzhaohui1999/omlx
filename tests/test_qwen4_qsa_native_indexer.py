@@ -4,18 +4,24 @@
 
 from __future__ import annotations
 
-import importlib
 import math
 
 import mlx.core as mx
 import pytest
 
 from omlx.custom_kernels.glm_moe_dsa import fast
-from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-qsa_fast = importlib.import_module("mlx_vlm.models.qwen4_exp.qsa_fast")
+def _load_vendored():
+    import_into(globals(), "mlx_vlm.models.qwen4_exp.qsa_fast")
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+qsa_fast = None
 
 
 def _native_available() -> bool:

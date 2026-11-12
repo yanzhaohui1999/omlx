@@ -13,31 +13,43 @@ indexer, 2048-token budget), synthetic 6-bit weights.
 
 from __future__ import annotations
 
-import importlib
-
 import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from omlx.patches import qwen35_verify_qmm
+from omlx.patches.mlx_vlm_mtp import qwen35_verify_linear
+from omlx.patches.qwen35_verify_sdpa_split import (
+    apply_qwen35_verify_sdpa_split_patch,
+)
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
 pytestmark = pytest.mark.skipif(not mx.metal.is_available(), reason="requires Metal")
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
-qwen4_exp = importlib.import_module("mlx_vlm.models.qwen4_exp")
 
-from omlx.patches import qwen35_verify_qmm  # noqa: E402
-from omlx.patches.mlx_vlm_mtp import qwen35_verify_linear  # noqa: E402
-from omlx.patches.qwen35_verify_sdpa_split import (  # noqa: E402
-    apply_qwen35_verify_sdpa_split_patch,
-)
+def _load_vendored():
+    qwen35_verify_qmm.apply_verify_qmm_patch()
+    qwen35_verify_linear.apply()
+    apply_qwen35_verify_sdpa_split_patch()
+    import_into(
+        globals(),
+        "mlx_vlm.models.qwen4_exp.language",
+        "mlx_vlm.models.qwen4_exp",
+        "mlx_vlm.models.qwen3_5.language=q35_language",
+        "mlx_vlm.models.qwen3_5.speculative_verifier=q35_verifier",
+    )
+    global _CONFIG
+    _CONFIG = _text_config()
 
-qwen35_verify_qmm.apply_verify_qmm_patch()
-qwen35_verify_linear.apply()
-apply_qwen35_verify_sdpa_split_patch()
-q35_language = importlib.import_module("mlx_vlm.models.qwen3_5.language")
-q35_verifier = importlib.import_module("mlx_vlm.models.qwen3_5.speculative_verifier")
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+language = None
+qwen4_exp = None
+q35_language = None
+q35_verifier = None
 
 
 def _float_cache_sdpa(queries, keys, values, cache, scale, mask, sinks=None):
@@ -104,7 +116,7 @@ def _text_config():
     )
 
 
-_CONFIG = _text_config()
+_CONFIG = None
 
 
 def _attention(seed: int):

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import importlib
 import math
 from types import SimpleNamespace
 
@@ -12,20 +11,39 @@ import numpy as np
 import pytest
 
 from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
+from tests.qwen4_vendored import QWEN4_COMPAT, apply_compat, import_into
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
-qsa_fast = importlib.import_module("mlx_vlm.models.qwen4_exp.qsa_fast")
+
+def _load_vendored():
+    import_into(
+        globals(),
+        "mlx_vlm.models.qwen4_exp.language",
+        "mlx_vlm.models.qwen4_exp.qsa_fast",
+    )
+
+
+PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+language = None
+qsa_fast = None
+
+
+@pytest.fixture
+def requires_kernels():
+    if qsa_fast._gpu_class() != "d":
+        pytest.skip("MLX's two-pass partition count is transcribed for 'd'-class GPUs only")
 
 
 @pytest.fixture(autouse=True)
 def _vendored_qwen4(monkeypatch):
-    compat.apply_mlx_vlm_qwen4_exp_compat_patch()
+    apply_compat()
     monkeypatch.setattr(qsa_fast, "_DECODE_SELECT_FAILED", {})
 
 
 def _tiny_text_config():
-    compat.apply_mlx_vlm_qwen4_exp_compat_patch()
+    apply_compat()
     from mlx_vlm.models.qwen4_exp import TextConfig
 
     return TextConfig(
@@ -1135,10 +1153,7 @@ def test_decode_steps_match_the_ops_path_bit_for_bit(monkeypatch, key_len):
     ).item()
 
 
-@pytest.mark.skipif(
-    qsa_fast._gpu_class() != "d",
-    reason="MLX's two-pass partition count is transcribed for 'd'-class GPUs only",
-)
+@pytest.mark.usefixtures("requires_kernels")
 @pytest.mark.parametrize(
     "key_len",
     [
