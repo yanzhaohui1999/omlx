@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import mlx_lm.models
 import mlx_lm.models.cache
+import mlx_lm.server
 import mlx_lm.tool_parsers
 import mlx_lm.tokenizer_utils
 import mlx_lm.utils
@@ -35,6 +36,7 @@ import mlx_vlm.tools.parsers
 import mlx_vlm.utils
 
 from omlx import memory_monitor
+from omlx.utils import model_loading
 from omlx.patches import (
     arrays_cache_extract,
     bailing_hybrid,
@@ -129,8 +131,10 @@ DEEPSEEK_V4 = patch_family(
         deepseek_v4,
         mlx_lm.models,
         mlx_lm.models.cache,
+        mlx_lm.server,
         mlx_lm.utils,
         mlx_lm.tokenizer_utils,
+        model_loading,
     ),
     packages=("omlx.patches.deepseek_v4",),
     sys_modules=(
