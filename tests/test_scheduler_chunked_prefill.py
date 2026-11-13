@@ -1831,6 +1831,13 @@ def _tiny_qwen4_exp():
 
 def _tiny_glm5_next():
     apply_mlx_vlm_glm5_next_compat_patch()
+    # The vendored cache layout imports PoolingCache from mlx_lm; the compat
+    # patch injects it, but an isolating module may have restored the pooling
+    # guard in between while the compat patch stayed applied. Apply it here,
+    # unconditionally, so the cache build does not depend on test order.
+    from omlx.patches.deepseek_v4 import apply_pooling_cache_support
+
+    apply_pooling_cache_support()
     from mlx_vlm.models import glm5_next
     from mlx_vlm.models.glm5_next import language
 

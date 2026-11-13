@@ -46,18 +46,28 @@ from tests.patch_families import GLM5_NEXT
 PATCH_ISOLATION = (GLM5_NEXT,)
 
 
+# Bound by _apply_glm5_next() before the first test runs.
+language = None
+
+
 def _apply_glm5_next():
     """Install the vendor overlay inside the module's isolation window."""
     if not apply_mlx_vlm_glm5_next_compat_patch():
         pytest.skip("mlx-vlm glm5_next vendor overlay unavailable")
     import importlib
 
-    globals()["language"] = importlib.import_module(
-        "mlx_vlm.models.glm5_next.language"
-    )
+    global language
+    language = importlib.import_module("mlx_vlm.models.glm5_next.language")
 
 
 PATCH_ISOLATION_SETUP = _apply_glm5_next
+
+
+@pytest.fixture
+def requires_nax():
+    # The vendor module only exists inside the isolation window.
+    if not language.nax_sparse_mla_available():
+        pytest.skip("split-K decode needs NAX")
 
 N_MAIN = 45
 N_MTP = 1
@@ -811,9 +821,7 @@ def test_vector_restore_and_continuation_match_scalar(size, depth, dtype):
         assert_row_states(cache, expected, size)
 
 
-@pytest.mark.skipif(
-    not language.nax_sparse_mla_available(), reason="split-K decode needs NAX"
-)
+@pytest.mark.usefixtures("requires_nax")
 @pytest.mark.parametrize("lengths", [[2051, 2057], [2057]])
 def test_split_k_batched_decode_matches_rows_alone(monkeypatch, lengths):
     mx.random.seed(4242)
@@ -1141,7 +1149,13 @@ def _runtime():
     from omlx.patches.mlx_vlm_mtp import glm5_next_vlm_runtime as rt
 
     assert rt.apply()
-    
+    # Outside pytest (the subprocess contract tests) the isolation fixture never
+    # runs, so bind the vendor module on first use.
+    global language
+    if language is None:
+        import importlib
+
+        language = importlib.import_module("mlx_vlm.models.glm5_next.language")
     return rt, language
 
 

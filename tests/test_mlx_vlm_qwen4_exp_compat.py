@@ -18,12 +18,18 @@ from omlx import memory_monitor
 from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
 from omlx.patches import qwen35_yarn
 
-compat.apply_mlx_vlm_qwen4_exp_compat_patch()
-qwen4_language = importlib.import_module("mlx_vlm.models.qwen4_exp.language")
+from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
-from tests.qwen4_vendored import QWEN4_COMPAT
+
+def _load_vendored():
+    import_into(globals(), "mlx_vlm.models.qwen4_exp.language=qwen4_language")
+
 
 PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION_SETUP = _load_vendored
+
+# Bound by _load_vendored() before the first test runs.
+qwen4_language = None
 
 
 def _tiny_config():

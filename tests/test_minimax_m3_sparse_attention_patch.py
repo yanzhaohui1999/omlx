@@ -14,9 +14,10 @@ nn = pytest.importorskip("mlx.nn")
 BLOCK = 4
 TOPK = 3
 
-from tests.patch_families import M3_SPARSE
+from tests.patch_families import MINIMAX_M3
 
-PATCH_ISOLATION = (M3_SPARSE,)
+# The sparse-attention rewrite now ships inside the MiniMax-M3 vendor overlay.
+PATCH_ISOLATION = (MINIMAX_M3,)
 
 
 @pytest.fixture(scope="module")

@@ -23,6 +23,7 @@ from omlx.patches.qwen35_verify_sdpa_split import (
     apply_qwen35_verify_sdpa_split_patch,
 )
 from tests.qwen4_vendored import QWEN4_COMPAT, import_into
+from tests.patch_families import QWEN35_VERIFY
 
 pytestmark = pytest.mark.skipif(not mx.metal.is_available(), reason="requires Metal")
 
@@ -42,7 +43,7 @@ def _load_vendored():
     _CONFIG = _text_config()
 
 
-PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION = (QWEN4_COMPAT, QWEN35_VERIFY)
 PATCH_ISOLATION_SETUP = _load_vendored
 
 # Bound by _load_vendored() before the first test runs.

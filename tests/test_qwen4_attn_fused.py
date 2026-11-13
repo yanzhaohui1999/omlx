@@ -23,6 +23,7 @@ from omlx.patches.mlx_vlm_mtp import qwen35_verify_linear
 from omlx.patches.qwen35_verify_sdpa_split import apply_qwen35_verify_sdpa_split_patch
 from omlx.patches.qwen35_yarn import apply_qwen35_yarn_patch
 from tests.qwen4_vendored import QWEN4_COMPAT, import_into
+from tests.patch_families import QWEN35_VERIFY
 
 pytestmark = pytest.mark.skipif(not mx.metal.is_available(), reason="requires Metal")
 
@@ -55,7 +56,7 @@ def _load_vendored():
     )
 
 
-PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION = (QWEN4_COMPAT, QWEN35_VERIFY)
 PATCH_ISOLATION_SETUP = _load_vendored
 
 # Bound by _load_vendored() before the first test runs.
@@ -72,7 +73,6 @@ _YARN_CONFIG = None
 def requires_kernels():
     if attn_fused._gpu_class() != "d":
         pytest.skip("MLX's vector SDPA plan is transcribed for 'd' GPUs")
-
 
 
 def _float_cache_sdpa(queries, keys, values, cache, scale, mask, sinks=None):
@@ -413,9 +413,9 @@ def test_prep_matches_norms_and_mrope(rows, pos_ndim, config_name, dtype):
 
 @pytest.mark.parametrize("config_name", ["default", "yarn"])
 def test_gathered_prefill_prep_matches_mlx_path(monkeypatch, config_name):
-    config = _YARN_CONFIG if config_name == "yarn" else _CONFIG
     """Prefill chunks before, across and past the QSA budget take the q/k
     norms and MRoPE from ``prep_qk``: outputs and cache equal the MLX ops'."""
+    config = _YARN_CONFIG if config_name == "yarn" else _CONFIG
     # A 256-token budget keeps the same three chunk routes at an eighth of the length.
     config = dataclasses.replace(config, indexer_budget=256)
     attn = _attention(seed=5, config=config)

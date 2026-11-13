@@ -14,8 +14,6 @@ from omlx.custom_kernels.sparse_index import fast
 from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
 
-
-
 def _load_vendored():
     import_into(globals(), "mlx_vlm.models.qwen4_exp.qsa_fast")
 

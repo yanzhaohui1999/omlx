@@ -61,6 +61,7 @@ from omlx.patches import (
     qwen35_q4_mlp,
     qwen35_verify_qmm,
     qwen35_verify_sdpa_split,
+    qwen35_yarn,
     sdpa256_attention,
     step3p7,
     turboquant_attention,
@@ -296,6 +297,18 @@ VERIFY_SPLIT = patch_family(
         mlx_vlm.models,
         mlx_vlm.models.qwen3_5.language,
     ),
+)
+
+# The Qwen4 decode/verify tests install the whole routing stack: the verify qmm
+# guard (``_QL_PATCHED``), the linear router inside mlx_vlm_mtp, the split-SDPA
+# verdict and the static-YaRN rope call. One family owns all four guards.
+QWEN35_VERIFY = patch_family(
+    modules=(
+        qwen35_verify_qmm,
+        qwen35_verify_sdpa_split,
+        qwen35_yarn,
+    ),
+    packages=("omlx.patches.mlx_vlm_mtp",),
 )
 
 GEMMA4 = patch_family(

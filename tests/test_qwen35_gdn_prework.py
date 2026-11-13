@@ -21,9 +21,10 @@ from mlx_vlm.speculative.cache_state import start_speculative_cache
 from mlx_vlm.speculative.ops import linear as linear_ops
 
 from omlx.patches import qwen35_gdn_prework as prework_mod
+from tests.patch_families import QWEN35_VERIFY
 from tests.qwen4_vendored import QWEN4_COMPAT, apply_compat
 
-PATCH_ISOLATION = (QWEN4_COMPAT,)
+PATCH_ISOLATION = (QWEN4_COMPAT, QWEN35_VERIFY)
 
 
 def _qwen4_language():

@@ -15,7 +15,6 @@ from omlx.patches import mlx_vlm_qwen4_exp_compat as compat
 from tests.qwen4_vendored import QWEN4_COMPAT, import_into
 
 
-
 def _load_vendored():
     import_into(
         globals(),
